@@ -395,7 +395,41 @@ class RunService:
             ],
         }
 
-    # ── compliance (Phase 7) ────────────────────────────────────────────────
+    # ── transparency (Phase 8) ──────────────────────────────────────────────
+
+    def transparency(
+        self,
+        run_id: str,
+        tenant_id: str | None = None,
+        leaf_index: int | None = None,
+    ) -> dict[str, Any]:
+        """Signed Tree Head over a run's evidence ledger, with an optional inclusion proof.
+
+        The control-plane identity that issued the run's authority also signs the tree head,
+        so the same key material that governs the run vouches for its evidence commitment.
+        When `leaf_index` is given, an inclusion proof for that evidence entry is returned;
+        a verifier can check it against the STH root without holding the whole ledger.
+        """
+        from .transparency import TransparencyLog
+
+        run = self.get(run_id, tenant_id)
+        ledger = run.ctx.ledger
+        now = datetime.now(timezone.utc).isoformat()
+        log = TransparencyLog.from_ledger(ledger)
+        sth = log.signed_tree_head(run.ctx.control_plane, now)
+        result: dict[str, Any] = {
+            "run_id": run_id,
+            "ledger_verified": ledger.verify(),
+            "signed_tree_head": sth.to_dict(),
+        }
+        if leaf_index is not None:
+            if leaf_index < 0 or leaf_index >= log.size:
+                raise IndexError(
+                    f"leaf index {leaf_index} out of range for tree of size {log.size}"
+                )
+            proof = log.inclusion_proof(leaf_index)
+            result["inclusion_proof"] = proof.to_dict()
+        return result
 
     def compliance(self, tenant_id: str | None = None) -> dict[str, Any]:
         """Tenant-wide SOC2/GDPR compliance rollup, projected from the run ledgers.

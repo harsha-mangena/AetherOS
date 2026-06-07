@@ -17,6 +17,11 @@ use aether_core::evidence::EvidenceLedger as CoreLedger;
 use aether_core::identity::{verify_signature as core_verify, AgentIdentity as CoreIdentity};
 use aether_core::lease::{Budget as CoreBudget, CapabilityLease as CoreLease};
 use aether_core::policy::{PolicyRequest as CoreReq, PolicySet as CorePolicySet};
+use aether_core::transparency::{
+    verify_consistency as core_verify_consistency, verify_inclusion as core_verify_inclusion,
+    ConsistencyProof as CoreConsistencyProof, InclusionProof as CoreInclusionProof,
+    TransparencyLog as CoreTransparencyLog,
+};
 
 /// Map a core error into an appropriate Python exception.
 fn map_err(e: CoreError) -> PyErr {
@@ -414,6 +419,94 @@ impl PyAutonomyRecord {
     }
 }
 
+/// A Merkle transparency log (RFC 6962) over evidence entry hashes.
+///
+/// Built from the ordered `entry_hash` values of an evidence ledger. It commits to those
+/// hashes with a single Merkle root, signs that root into a Signed Tree Head with an
+/// `AgentIdentity`, and emits inclusion and consistency proofs. Tree construction and
+/// proof generation live in Rust where the RFC 6962 hashing is fixed and auditable.
+#[pyclass(name = "TransparencyLog")]
+struct PyTransparencyLog {
+    inner: CoreTransparencyLog,
+}
+
+#[pymethods]
+impl PyTransparencyLog {
+    #[new]
+    fn new() -> Self {
+        PyTransparencyLog {
+            inner: CoreTransparencyLog::new(),
+        }
+    }
+
+    /// Build a log from a JSON array of evidence entry hashes (hex strings), in order.
+    #[staticmethod]
+    fn from_entry_hashes(entry_hashes_json: String) -> PyResult<Self> {
+        let hashes: Vec<String> = serde_json::from_str(&entry_hashes_json)
+            .map_err(|e| PyValueError::new_err(format!("entry_hashes_json: {e}")))?;
+        let inner = CoreTransparencyLog::from_entry_hashes(&hashes).map_err(map_err)?;
+        Ok(PyTransparencyLog { inner })
+    }
+
+    /// Append one evidence entry hash (hex) as a new leaf.
+    fn append_entry_hash(&mut self, entry_hash_hex: String) -> PyResult<()> {
+        self.inner
+            .append_entry_hash(&entry_hash_hex)
+            .map_err(map_err)
+    }
+
+    #[getter]
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    #[getter]
+    fn root_hash(&self) -> String {
+        self.inner.root_hash()
+    }
+
+    /// Produce a Signed Tree Head over the current root, returned as a JSON string.
+    fn signed_tree_head(&self, signer: &PyAgentIdentity, timestamp: String) -> PyResult<String> {
+        let sth = self
+            .inner
+            .signed_tree_head(&signer.inner, timestamp)
+            .map_err(map_err)?;
+        serde_json::to_string(&sth).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Build an inclusion proof for the leaf at `index`, returned as a JSON string.
+    fn inclusion_proof(&self, index: usize) -> PyResult<String> {
+        let proof = self.inner.inclusion_proof(index).map_err(map_err)?;
+        serde_json::to_string(&proof).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Build a consistency proof from tree size `first` to the current size, as JSON.
+    fn consistency_proof(&self, first: usize) -> PyResult<String> {
+        let proof = self.inner.consistency_proof(first).map_err(map_err)?;
+        serde_json::to_string(&proof).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+}
+
+/// Verify an inclusion proof (JSON) that `entry_hash` sits under `root_hash`.
+#[pyfunction]
+fn verify_inclusion(proof_json: String, entry_hash_hex: String, root_hash_hex: String) -> bool {
+    let proof: CoreInclusionProof = match serde_json::from_str(&proof_json) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    core_verify_inclusion(&proof, &entry_hash_hex, &root_hash_hex).is_ok()
+}
+
+/// Verify a consistency proof (JSON) connecting `first_root` to `second_root`.
+#[pyfunction]
+fn verify_consistency(proof_json: String, first_root_hex: String, second_root_hex: String) -> bool {
+    let proof: CoreConsistencyProof = match serde_json::from_str(&proof_json) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    core_verify_consistency(&proof, &first_root_hex, &second_root_hex).is_ok()
+}
+
 /// The native AetherOS extension module.
 #[pymodule]
 fn _aether_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -424,6 +517,9 @@ fn _aether_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPolicyEngine>()?;
     m.add_class::<PyConstitutionEngine>()?;
     m.add_class::<PyAutonomyRecord>()?;
+    m.add_class::<PyTransparencyLog>()?;
     m.add_function(wrap_pyfunction!(verify_signature, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_inclusion, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_consistency, m)?)?;
     Ok(())
 }
