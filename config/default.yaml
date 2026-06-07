@@ -139,6 +139,19 @@ storage:
   # first use. Has no effect when backend = "none".
   db_dir: "./ledgers"
 
+# ── Authentication (Phase 12) ──────────────────────────────────────────────
+# JWT Bearer-token gate for the control-plane API.
+# Set enabled: true and replace both secrets before any networked deployment.
+auth:
+  # Master switch. false = pass-through (default, all existing tests pass unchanged).
+  enabled: false
+  # HMAC-SHA256 signing secret for JWTs. Must be >= 32 bytes in production.
+  secret: "change-me-before-production-at-least-32-bytes!!"
+  # Secret presented at POST /auth/token to receive a JWT (separate from signing key).
+  admin_secret: "admin-change-me"
+  # JWT lifetime in seconds (default: 1 hour).
+  token_ttl_seconds: 3600
+
 sandbox:
   # Execution backend for governed tool calls. "local" = in-process sandbox with a
   # timeout guard + egress control + provenance. A native/E2B backend drops in here.

@@ -119,6 +119,33 @@ class StorageConfig(BaseModel):
     db_dir: str = "./ledgers"
 
 
+class AuthConfig(BaseModel):
+    """API authentication configuration (Phase 12).
+
+    When ``enabled = False`` (the default) the control plane operates without
+    authentication — identical to all prior behavior, so no existing test needs
+    modification. When ``enabled = True`` every protected endpoint requires a
+    valid Bearer JWT in the ``Authorization`` header.
+
+    Tokens are signed with HMAC-SHA256 (HS256, RFC 7519). The server holds one
+    shared secret (``secret``); clients exchange ``tenant_id`` + ``admin_secret``
+    at ``POST /auth/token`` and receive a signed JWT carrying ``sub = tenant_id``.
+    The admin secret is a separate config value that controls who may issue tokens.
+
+    Zero-hardcoding: change ``auth.secret`` in ``config/default.yaml`` or via the
+    ``AETHER__AUTH__SECRET`` environment variable before any networked deployment.
+    """
+
+    # Master switch. False = pass-through (backward-compatible with all tests).
+    enabled: bool = False
+    # HMAC-SHA256 signing secret. Must be ≥ 32 bytes in production.
+    secret: str = "change-me-before-production-at-least-32-bytes!!"
+    # Separate secret required at POST /auth/token to receive a JWT.
+    admin_secret: str = "admin-change-me"
+    # JWT lifetime in seconds (default: 1 hour).
+    token_ttl_seconds: int = 3600
+
+
 class GatewayConfigModel(BaseModel):
     allow_destinations: list[str] = Field(default_factory=list)
     external_tools: list[str] = Field(default_factory=list)
@@ -147,6 +174,7 @@ class AetherConfig(BaseModel):
     autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
     transparency: TransparencyConfig = Field(default_factory=TransparencyConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
 
 

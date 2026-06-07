@@ -41,7 +41,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 try:
-    from fastapi import FastAPI, Header, HTTPException
+    from fastapi import Depends, FastAPI, Header, HTTPException
     from fastapi.middleware.cors import CORSMiddleware
 except Exception as exc:  # pragma: no cover - import guard
     raise RuntimeError(
@@ -56,6 +56,7 @@ from .tenancy import (
     TenantError,
     UnknownTenant,
 )
+from .auth import AdminSecretMismatch, AuthService, InvalidToken, RevokedToken
 
 
 class CreateRunRequest(BaseModel):
@@ -113,8 +114,17 @@ class InstallSkillRequest(BaseModel):
     )
 
 
-def create_app(service: RunService | None = None) -> "FastAPI":
-    """Build the FastAPI app. A custom RunService can be injected for tests."""
+class TokenRequest(BaseModel):
+    tenant_id: str = Field(..., description="The tenant for which to issue a JWT.")
+    admin_secret: str = Field(..., description="Server admin secret (from auth.admin_secret config).")
+
+
+class RevokeRequest(BaseModel):
+    token: str = Field(..., description="The JWT to revoke (by its jti).")
+
+
+def create_app(service: RunService | None = None, auth_service: "AuthService | None" = None) -> "FastAPI":
+    """Build the FastAPI app. A custom RunService and AuthService can be injected for tests."""
     app = FastAPI(title="AetherOS Control Plane API", version="0.9.0")
     app.add_middleware(
         CORSMiddleware,
@@ -124,6 +134,49 @@ def create_app(service: RunService | None = None) -> "FastAPI":
     )
     svc = service or RunService()
     app.state.service = svc
+
+    # Build the AuthService from config if not injected (allows tests to inject a custom one).
+    if auth_service is None:
+        cfg = load_config()
+        auth_svc = AuthService(cfg.auth)
+    else:
+        auth_svc = auth_service
+    app.state.auth_service = auth_svc
+
+    # The tenant-resolution dependency. When auth is disabled this is identical to reading
+    # the X-Tenant-Id header. When auth is enabled it validates the Bearer JWT and derives
+    # tenant_id from the sub claim — the header is irrelevant and cannot be forged.
+    get_tenant = auth_svc.tenant_id_dependency()
+
+    # ── auth endpoints (Phase 12, always unprotected) ─────────────────────────
+
+    @app.post("/auth/token")
+    def issue_token(req: TokenRequest) -> dict[str, Any]:
+        """Issue a signed JWT for a tenant.
+
+        The caller must supply the correct ``admin_secret`` (from config). On success,
+        returns ``{"token": "<jwt>", "token_type": "bearer", "expires_in": <seconds>}``.
+        When auth is disabled this endpoint still works — useful for pre-provisioning
+        tokens before flipping auth on.
+        """
+        try:
+            token = auth_svc.issue_token(req.tenant_id, req.admin_secret)
+        except AdminSecretMismatch:
+            raise HTTPException(status_code=401, detail="invalid admin_secret")
+        return {
+            "token": token,
+            "token_type": "bearer",
+            "expires_in": auth_svc._config.token_ttl_seconds,  # noqa: SLF001 — same package
+        }
+
+    @app.post("/auth/revoke")
+    def revoke_token(req: RevokeRequest) -> dict[str, Any]:
+        """Revoke a JWT by its jti. The token will be rejected on all future requests."""
+        try:
+            jti = auth_svc.revoke_token(req.token)
+        except (InvalidToken, RevokedToken) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"revoked_jti": jti}
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -154,44 +207,44 @@ def create_app(service: RunService | None = None) -> "FastAPI":
         }
 
     @app.get("/runs")
-    def list_runs(x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
+    def list_runs(tenant_id: str = Depends(get_tenant)) -> dict[str, Any]:
         try:
-            svc.tenants.get(x_tenant_id)
+            svc.tenants.get(tenant_id)
         except UnknownTenant:
             raise HTTPException(status_code=404, detail="unknown tenant")
-        return {"tenant_id": x_tenant_id, "runs": svc.list_runs(x_tenant_id)}
+        return {"tenant_id": tenant_id, "runs": svc.list_runs(tenant_id)}
 
     @app.post("/runs")
     def create_run(
-        req: CreateRunRequest, x_tenant_id: str = Header(DEFAULT_TENANT_ID)
+        req: CreateRunRequest, tenant_id: str = Depends(get_tenant)
     ) -> dict[str, Any]:
         try:
-            run = svc.create_run(req.intent, req.submitted_by, req.budget_minor, x_tenant_id)
+            run = svc.create_run(req.intent, req.submitted_by, req.budget_minor, tenant_id)
         except UnknownTenant:
             raise HTTPException(status_code=404, detail="unknown tenant")
         return run.to_view()
 
     @app.get("/runs/{run_id}")
-    def get_run(run_id: str, x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
+    def get_run(run_id: str, tenant_id: str = Depends(get_tenant)) -> dict[str, Any]:
         try:
-            return svc.get(run_id, x_tenant_id).to_view()
+            return svc.get(run_id, tenant_id).to_view()
         except (KeyError, CrossTenantAccess):
             raise HTTPException(status_code=404, detail="unknown run")
 
     @app.post("/runs/{run_id}/advance")
-    def advance(run_id: str, x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
+    def advance(run_id: str, tenant_id: str = Depends(get_tenant)) -> dict[str, Any]:
         try:
-            return svc.advance(run_id, x_tenant_id).to_view()
+            return svc.advance(run_id, tenant_id).to_view()
         except (KeyError, CrossTenantAccess):
             raise HTTPException(status_code=404, detail="unknown run")
 
     @app.post("/runs/{run_id}/resume")
     def resume(
-        run_id: str, req: ResumeRequest, x_tenant_id: str = Header(DEFAULT_TENANT_ID)
+        run_id: str, req: ResumeRequest, tenant_id: str = Depends(get_tenant)
     ) -> dict[str, Any]:
         try:
             return svc.resume(
-                run_id, req.step_id, req.approved, req.approver, x_tenant_id
+                run_id, req.step_id, req.approved, req.approver, tenant_id
             ).to_view()
         except (KeyError, CrossTenantAccess):
             raise HTTPException(status_code=404, detail="unknown run")
@@ -199,9 +252,9 @@ def create_app(service: RunService | None = None) -> "FastAPI":
             raise HTTPException(status_code=409, detail=str(exc))
 
     @app.get("/runs/{run_id}/evidence")
-    def evidence(run_id: str, x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
+    def evidence(run_id: str, tenant_id: str = Depends(get_tenant)) -> dict[str, Any]:
         try:
-            return svc.evidence(run_id, x_tenant_id)
+            return svc.evidence(run_id, tenant_id)
         except (KeyError, CrossTenantAccess):
             raise HTTPException(status_code=404, detail="unknown run")
 
@@ -211,11 +264,11 @@ def create_app(service: RunService | None = None) -> "FastAPI":
     def transparency(
         run_id: str,
         leaf: int | None = None,
-        x_tenant_id: str = Header(DEFAULT_TENANT_ID),
+        tenant_id: str = Depends(get_tenant),
     ) -> dict[str, Any]:
         """Signed Tree Head over a run's evidence ledger; optional ?leaf=N inclusion proof."""
         try:
-            return svc.transparency(run_id, x_tenant_id, leaf_index=leaf)
+            return svc.transparency(run_id, tenant_id, leaf_index=leaf)
         except (KeyError, CrossTenantAccess):
             raise HTTPException(status_code=404, detail="unknown run")
         except IndexError as exc:
@@ -225,11 +278,11 @@ def create_app(service: RunService | None = None) -> "FastAPI":
     def transparency_consistency(
         run_id: str,
         first_size: int,
-        x_tenant_id: str = Header(DEFAULT_TENANT_ID),
+        tenant_id: str = Depends(get_tenant),
     ) -> dict[str, Any]:
         """Append-only consistency proof from ?first_size=M to the current ledger size."""
         try:
-            return svc.transparency_consistency(run_id, first_size, x_tenant_id)
+            return svc.transparency_consistency(run_id, first_size, tenant_id)
         except (KeyError, CrossTenantAccess):
             raise HTTPException(status_code=404, detail="unknown run")
         except IndexError as exc:
@@ -238,7 +291,7 @@ def create_app(service: RunService | None = None) -> "FastAPI":
     @app.get("/runs/{run_id}/transparency/cosigned")
     def transparency_cosigned(
         run_id: str,
-        x_tenant_id: str = Header(DEFAULT_TENANT_ID),
+        tenant_id: str = Depends(get_tenant),
     ) -> dict[str, Any]:
         """Signed tree head plus independent witness cosignatures (split-view defense).
 
@@ -247,7 +300,7 @@ def create_app(service: RunService | None = None) -> "FastAPI":
         cosigned the head along a consistent, append-only history.
         """
         try:
-            return svc.transparency_cosigned(run_id, x_tenant_id)
+            return svc.transparency_cosigned(run_id, tenant_id)
         except (KeyError, CrossTenantAccess):
             raise HTTPException(status_code=404, detail="unknown run")
         except IndexError as exc:
@@ -256,18 +309,18 @@ def create_app(service: RunService | None = None) -> "FastAPI":
     # ── analytics (per-tenant, projected from the evidence ledger) ────────────
 
     @app.get("/analytics")
-    def analytics(x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
+    def analytics(tenant_id: str = Depends(get_tenant)) -> dict[str, Any]:
         try:
-            return svc.analytics(x_tenant_id)
+            return svc.analytics(tenant_id)
         except UnknownTenant:
             raise HTTPException(status_code=404, detail="unknown tenant")
 
     # ── compliance export (Phase 7: SOC2/GDPR, projected from the ledger) ─────
 
     @app.get("/compliance")
-    def compliance(x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
+    def compliance(tenant_id: str = Depends(get_tenant)) -> dict[str, Any]:
         try:
-            return svc.compliance(x_tenant_id)
+            return svc.compliance(tenant_id)
         except UnknownTenant:
             raise HTTPException(status_code=404, detail="unknown tenant")
 
@@ -311,7 +364,7 @@ def create_app(service: RunService | None = None) -> "FastAPI":
         return tenant.to_view()
 
     @app.get("/tenants/{tenant_id}")
-    def get_tenant(tenant_id: str) -> dict[str, Any]:
+    def get_tenant_by_id(tenant_id: str) -> dict[str, Any]:
         try:
             return svc.tenants.get(tenant_id).to_view()
         except UnknownTenant:
@@ -320,21 +373,21 @@ def create_app(service: RunService | None = None) -> "FastAPI":
     # ── run lifecycle (Phase 11) ──────────────────────────────────────────────
 
     @app.post("/runs/{run_id}/cancel")
-    def cancel_run(run_id: str, x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
+    def cancel_run(run_id: str, tenant_id: str = Depends(get_tenant)) -> dict[str, Any]:
         """Cancel a non-terminal run. The cancellation is recorded in the evidence ledger."""
         try:
-            return svc.cancel_run(run_id, x_tenant_id).to_view()
+            return svc.cancel_run(run_id, tenant_id).to_view()
         except (KeyError, CrossTenantAccess):
             raise HTTPException(status_code=404, detail="unknown run")
 
     @app.delete("/runs/{run_id}", status_code=204)
-    def delete_run(run_id: str, x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> None:
+    def delete_run(run_id: str, tenant_id: str = Depends(get_tenant)) -> None:
         """Remove a terminal (completed/halted) run from the service registry.
 
         Returns 204 No Content on success. Active runs must be cancelled first.
         """
         try:
-            svc.delete_run(run_id, x_tenant_id)
+            svc.delete_run(run_id, tenant_id)
         except (KeyError, CrossTenantAccess):
             raise HTTPException(status_code=404, detail="unknown run")
         except ValueError as exc:
@@ -344,29 +397,29 @@ def create_app(service: RunService | None = None) -> "FastAPI":
 
     @app.post("/collaborations", status_code=201)
     def open_collaboration(
-        req: OpenCollaborationRequest, x_tenant_id: str = Header(DEFAULT_TENANT_ID)
+        req: OpenCollaborationRequest, tenant_id: str = Depends(get_tenant)
     ) -> dict[str, Any]:
         """Open (or retrieve) a tenant-scoped shared ledger for multi-agent collaboration."""
         try:
-            return svc.open_collaboration(req.collaboration_id, x_tenant_id)
+            return svc.open_collaboration(req.collaboration_id, tenant_id)
         except UnknownTenant:
             raise HTTPException(status_code=404, detail="unknown tenant")
 
     @app.get("/collaborations")
-    def list_collaborations(x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
+    def list_collaborations(tenant_id: str = Depends(get_tenant)) -> dict[str, Any]:
         """List all collaborations visible to the requesting tenant."""
         try:
-            return {"tenant_id": x_tenant_id, "collaborations": svc.list_collaborations(x_tenant_id)}
+            return {"tenant_id": tenant_id, "collaborations": svc.list_collaborations(tenant_id)}
         except UnknownTenant:
             raise HTTPException(status_code=404, detail="unknown tenant")
 
     @app.get("/collaborations/{collaboration_id}")
     def get_collaboration(
-        collaboration_id: str, x_tenant_id: str = Header(DEFAULT_TENANT_ID)
+        collaboration_id: str, tenant_id: str = Depends(get_tenant)
     ) -> dict[str, Any]:
         """Return a collaboration's full state and tamper-evident shared ledger."""
         try:
-            return svc.get_collaboration(collaboration_id, x_tenant_id)
+            return svc.get_collaboration(collaboration_id, tenant_id)
         except (CrossTenantAccess, KeyError):
             raise HTTPException(status_code=404, detail="unknown collaboration")
         except UnknownTenant:
@@ -376,12 +429,12 @@ def create_app(service: RunService | None = None) -> "FastAPI":
     def admit_agent(
         collaboration_id: str,
         req: AdmitAgentRequest,
-        x_tenant_id: str = Header(DEFAULT_TENANT_ID),
+        tenant_id: str = Depends(get_tenant),
     ) -> dict[str, Any]:
         """Admit an agent to a collaboration, verifying its capability lease signature."""
         try:
             return svc.admit_to_collaboration(
-                collaboration_id, req.agent_id, req.lease, x_tenant_id
+                collaboration_id, req.agent_id, req.lease, tenant_id
             )
         except (CrossTenantAccess, KeyError):
             raise HTTPException(status_code=404, detail="unknown collaboration")
@@ -394,12 +447,12 @@ def create_app(service: RunService | None = None) -> "FastAPI":
     def contribute(
         collaboration_id: str,
         req: ContributeRequest,
-        x_tenant_id: str = Header(DEFAULT_TENANT_ID),
+        tenant_id: str = Depends(get_tenant),
     ) -> dict[str, Any]:
         """Append an attributed, tamper-evident entry to the collaboration's shared ledger."""
         try:
             return svc.contribute_to_collaboration(
-                collaboration_id, req.agent_id, req.event_type, req.payload, x_tenant_id
+                collaboration_id, req.agent_id, req.event_type, req.payload, tenant_id
             )
         except (CrossTenantAccess, KeyError):
             raise HTTPException(status_code=404, detail="unknown collaboration")
@@ -431,7 +484,7 @@ def create_app(service: RunService | None = None) -> "FastAPI":
     def install_skill(
         skill_id: str,
         req: InstallSkillRequest,
-        x_tenant_id: str = Header(DEFAULT_TENANT_ID),
+        tenant_id: str = Depends(get_tenant),
     ) -> dict[str, Any]:
         """Install a marketplace skill under the full governance gate for a tenant.
 
@@ -441,7 +494,7 @@ def create_app(service: RunService | None = None) -> "FastAPI":
         """
         try:
             return svc.marketplace_install(
-                skill_id, req.version, x_tenant_id, req.permitted_scopes
+                skill_id, req.version, tenant_id, req.permitted_scopes
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
@@ -451,10 +504,10 @@ def create_app(service: RunService | None = None) -> "FastAPI":
             raise HTTPException(status_code=400, detail=str(exc))
 
     @app.get("/marketplace/installed")
-    def marketplace_installed(x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
+    def marketplace_installed(tenant_id: str = Depends(get_tenant)) -> dict[str, Any]:
         """List all skills installed for the requesting tenant."""
         try:
-            return {"tenant_id": x_tenant_id, "installed": svc.marketplace_installed(x_tenant_id)}
+            return {"tenant_id": tenant_id, "installed": svc.marketplace_installed(tenant_id)}
         except UnknownTenant:
             raise HTTPException(status_code=404, detail="unknown tenant")
 
