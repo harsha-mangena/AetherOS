@@ -1,8 +1,11 @@
-"""Admin introspection API for AetherOS — Phase 22.
+"""Admin introspection API for AetherOS — Phase 22/25.
 
 Provides lightweight, read-only admin endpoints over the RunService state for
 ops tooling, dashboards, and SIEM pipelines. All endpoints use the standard
 get_tenant FastAPI dependency so they inherit auth protection when auth is enabled.
+
+Phase 25 adds GET /admin/events — a real-time SSE stream (W3C 2015) of governed
+run state changes, with events formatted as CloudEvents v1.0.2 JSON payloads.
 
 Standards / research net
 ────────────────────────
@@ -12,10 +15,13 @@ Standards / research net
 * RFC 7807 Problem Details for HTTP APIs (IETF 2016): error response shape —
   {"detail": "<human-readable problem>"} for HTTP 4xx/5xx responses, consistent
   with FastAPI's built-in HTTPException format.
+* W3C Server-Sent Events (W3C Recommendation 2015): text/event-stream, event/data/id.
+* CloudEvents v1.0.2 (CNCF 2022): specversion, id, source, type, time, data.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 try:
@@ -209,5 +215,82 @@ def make_admin_router(svc: RunService, get_tenant: Any) -> "APIRouter":
             "total_cost_minor": total_cost,
             "tenant_count": len(tenant_ids),
         }
+
+    # ── GET /admin/events ─────────────────────────────────────────────────────
+
+    @router.get("/events")
+    async def admin_events(
+        tenant_id: str = Depends(get_tenant),
+        poll_interval: float = 0.1,
+        heartbeat_interval: int = 15,
+    ) -> Any:
+        """Real-time SSE stream of governed run state changes.
+
+        Streams Server-Sent Events (W3C 2015) as the governance engine processes
+        runs. Each event is a JSON-encoded RunEvent (CloudEvents v1.0.2 aligned)
+        with type aetheros.run.{created|step_completed|halted|completed|approval_required}
+        plus periodic heartbeats to keep the connection alive through proxies.
+
+        Connect with EventSource (browser) or httpx-sse (Python):
+            eventsource = new EventSource('/admin/events', {headers: {Authorization: ...}})
+            eventsource.onmessage = (e) => console.log(JSON.parse(e.data))
+
+        Parameters
+        ----------
+        poll_interval:
+            Seconds between RunService snapshot polls (default 0.1s = 100ms).
+        heartbeat_interval:
+            Seconds between heartbeat events to keep connections alive (default 15s).
+        """
+        from .events import diff_snapshots, RunEvent, get_event_bus
+
+        try:
+            from sse_starlette.sse import EventSourceResponse
+        except ImportError:
+            raise HTTPException(status_code=503, detail="sse_starlette not installed")
+
+        bus = get_event_bus()
+
+        async def event_generator():
+            prev_snapshot: dict[str, dict] = {}
+            loop = asyncio.get_running_loop()
+            last_heartbeat = loop.time()
+            seq = 0
+            try:
+                while True:
+                    # Snapshot current run state (non-blocking via to_thread).
+                    runs = await asyncio.to_thread(svc.list_runs, tenant_id)
+                    current_snapshot = {r["run_id"]: r for r in runs}
+
+                    # Diff and yield events.
+                    for event in diff_snapshots(prev_snapshot, current_snapshot):
+                        seq += 1
+                        yield {
+                            "event": event.type,
+                            "data": event.to_sse_data(),
+                            "id": str(seq),
+                        }
+                    prev_snapshot = current_snapshot
+
+                    # Heartbeat to keep proxies from closing the connection.
+                    now = asyncio.get_running_loop().time()
+                    if now - last_heartbeat >= heartbeat_interval:
+                        seq += 1
+                        hb = RunEvent(
+                            type="aetheros.heartbeat",
+                            data={"subscriber_count": bus.subscriber_count},
+                        )
+                        yield {
+                            "event": "aetheros.heartbeat",
+                            "data": hb.to_sse_data(),
+                            "id": str(seq),
+                        }
+                        last_heartbeat = now
+
+                    await asyncio.sleep(poll_interval)
+            except asyncio.CancelledError:
+                pass  # client disconnected — clean exit
+
+        return EventSourceResponse(event_generator())
 
     return router

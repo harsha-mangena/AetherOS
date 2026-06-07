@@ -316,6 +316,67 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/admin/events": {
+      "get": {
+        "description": "Real-time SSE stream of governed run state changes.\n\nStreams Server-Sent Events (W3C 2015) as the governance engine processes\nruns. Each event is a JSON-encoded RunEvent (CloudEvents v1.0.2 aligned)\nwith type aetheros.run.{created|step_completed|halted|completed|approval_required}\nplus periodic heartbeats to keep the connection alive through proxies.\n\nConnect with EventSource (browser) or httpx-sse (Python):\n    eventsource = new EventSource('/admin/events', {headers: {Authorization: ...}})\n    eventsource.onmessage = (e) => console.log(JSON.parse(e.data))\n\nParameters\n----------\npoll_interval:\n    Seconds between RunService snapshot polls (default 0.1s = 100ms).\nheartbeat_interval:\n    Seconds between heartbeat events to keep connections alive (default 15s).",
+        "operationId": "admin_events_admin_events_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "poll_interval",
+            "required": false,
+            "schema": {
+              "default": 0.1,
+              "title": "Poll Interval",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "heartbeat_interval",
+            "required": false,
+            "schema": {
+              "default": 15,
+              "title": "Heartbeat Interval",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Admin Events Admin Events Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Events"
+      }
+    },
     "/admin/policy/deny-rate": {
       "get": {
         "description": "Policy denial statistics for the requesting tenant.\n\nCounts steps with status \"denied\" across all runs without replaying\nthe evidence ledger. Response includes total_steps, denied_steps,\ndeny_rate (0.0\u20131.0, rounded to 3dp), and a per-run breakdown.",

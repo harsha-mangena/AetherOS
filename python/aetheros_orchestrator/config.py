@@ -223,6 +223,21 @@ class ShutdownConfig(BaseModel):
     drain_timeout_seconds: int = 30
 
 
+class EventStreamConfig(BaseModel):
+    """Real-time SSE event stream configuration (Phase 25).
+
+    poll_interval_seconds: how often the SSE generator polls RunService for
+      state changes. Lower values = lower latency but more CPU.
+    heartbeat_interval_seconds: how often to send keepalive events to prevent
+      proxies from closing idle connections. Standard: 15-30s.
+    max_subscribers: maximum concurrent SSE connections (0 = unlimited).
+    """
+
+    poll_interval_seconds: float = 0.1
+    heartbeat_interval_seconds: int = 15
+    max_subscribers: int = 0  # 0 = unlimited; enforce in Phase 26
+
+
 class PrometheusConfig(BaseModel):
     """Prometheus metrics exposition configuration (Phase 22).
 
@@ -388,6 +403,7 @@ class AetherConfig(BaseModel):
     auth: AuthConfig = Field(default_factory=AuthConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     shutdown: ShutdownConfig = Field(default_factory=ShutdownConfig)
+    event_stream: EventStreamConfig = Field(default_factory=EventStreamConfig)
     prometheus: PrometheusConfig = Field(default_factory=PrometheusConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     tracing: TracingConfig = Field(default_factory=TracingConfig)
