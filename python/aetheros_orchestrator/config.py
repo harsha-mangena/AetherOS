@@ -208,6 +208,21 @@ class SandboxConfig(BaseModel):
     gateway: GatewayConfigModel = Field(default_factory=GatewayConfigModel)
 
 
+class ShutdownConfig(BaseModel):
+    """Graceful shutdown configuration (Phase 23).
+
+    When the service receives SIGTERM (via uvicorn's lifespan shutdown event),
+    it sets a drain flag on RunService so advance() halts any in-flight run
+    with a terminal ledger entry before the process exits. This guarantees
+    no run is silently lost on a rolling restart.
+
+    drain_timeout_seconds: max seconds to wait for in-flight runs to reach
+    a terminal state. Kubernetes default terminationGracePeriodSeconds is 30s.
+    Zero-hardcoding: override via AETHER__SHUTDOWN__* env vars.
+    """
+    drain_timeout_seconds: int = 30
+
+
 class PrometheusConfig(BaseModel):
     """Prometheus metrics exposition configuration (Phase 22).
 
@@ -372,6 +387,7 @@ class AetherConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+    shutdown: ShutdownConfig = Field(default_factory=ShutdownConfig)
     prometheus: PrometheusConfig = Field(default_factory=PrometheusConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     tracing: TracingConfig = Field(default_factory=TracingConfig)

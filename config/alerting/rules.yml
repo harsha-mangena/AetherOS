@@ -1,0 +1,158 @@
+# AetherOS Prometheus Alerting and Recording Rules — Phase 23
+#
+# Standards:
+#   Prometheus Alerting Rules (prometheus.io/docs 2023)
+#   Google SRE Book (2016) Chapter 6 — Four Golden Signals:
+#     latency, traffic, errors, saturation
+#   OTEL Semantic Conventions v1.25.0 — aetheros.* metric namespace
+#
+# Usage:
+#   Add to prometheus.yml rule_files section:
+#     rule_files:
+#       - /path/to/aetheros/config/alerting/rules.yml
+#
+# Metric names (OTEL → Prometheus):
+#   aetheros.runs.started       → aetheros_runs_started_total
+#   aetheros.runs.completed     → aetheros_runs_completed_total
+#   aetheros.runs.halted        → aetheros_runs_halted_total
+#   aetheros.policy.denied      → aetheros_policy_denied_total
+#   aetheros.tool.invoked       → aetheros_tool_invoked_total
+#   aetheros.budget.spent_minor → aetheros_budget_spent_minor_total
+#   aetheros.runs.duration_ms   → aetheros_runs_duration_ms (histogram)
+#   aetheros.step.duration_ms   → aetheros_step_duration_ms (histogram)
+
+groups:
+
+  - name: aetheros.recording
+    interval: 60s
+    rules:
+
+      # Policy denial rate over 5 minutes: denied / started
+      # Used by alerting rules below and by Grafana dashboards.
+      - record: aetheros:policy_deny_rate:5m
+        expr: |
+          rate(aetheros_policy_denied_total[5m])
+          /
+          clamp_min(rate(aetheros_runs_started_total[5m]), 0.001)
+
+      # Run completion rate (successful completions / total starts)
+      - record: aetheros:run_completion_rate:5m
+        expr: |
+          rate(aetheros_runs_completed_total[5m])
+          /
+          clamp_min(rate(aetheros_runs_started_total[5m]), 0.001)
+
+      # p95 run duration in milliseconds over 5 minutes
+      - record: aetheros:run_duration_p95_ms:5m
+        expr: |
+          histogram_quantile(0.95,
+            rate(aetheros_runs_duration_ms_bucket[5m])
+          )
+
+      # p99 step duration in milliseconds over 5 minutes
+      - record: aetheros:step_duration_p99_ms:5m
+        expr: |
+          histogram_quantile(0.99,
+            rate(aetheros_step_duration_ms_bucket[5m])
+          )
+
+      # Budget throughput: minor units spent per second
+      - record: aetheros:budget_throughput_minor_per_sec:5m
+        expr: rate(aetheros_budget_spent_minor_total[5m])
+
+  - name: aetheros.alerts
+    rules:
+
+      # ── Error rate alerts ──────────────────────────────────────────────────
+
+      - alert: AetherOSHighPolicyDenyRate
+        expr: aetheros:policy_deny_rate:5m > 0.20
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "AetherOS policy denial rate is high ({{ $value | humanizePercentage }})"
+          description: >
+            The governed execution engine is denying more than 20% of runs over
+            the past 5 minutes. This may indicate a misconfigured policy rule,
+            a misbehaving agent exceeding its capability scope, or a budget
+            exhaustion cascade. Tenant: {{ $labels.aetheros_tenant_id }}.
+          runbook_url: "https://aetheros.docs/runbooks/high-deny-rate"
+
+      - alert: AetherOSCriticalPolicyDenyRate
+        expr: aetheros:policy_deny_rate:5m > 0.50
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "AetherOS policy denial rate is critical ({{ $value | humanizePercentage }})"
+          description: >
+            More than 50% of governed runs are being denied. Immediate investigation
+            required. Likely causes: constitution violation cascade, budget exhaustion
+            across all tenants, or a broken policy configuration pushed to production.
+          runbook_url: "https://aetheros.docs/runbooks/critical-deny-rate"
+
+      # ── Latency alerts ─────────────────────────────────────────────────────
+
+      - alert: AetherOSHighRunLatency
+        expr: aetheros:run_duration_p95_ms:5m > 60000
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "AetherOS p95 run duration exceeds 60s ({{ $value | humanizeDuration }})"
+          description: >
+            The 95th percentile governed run duration has exceeded 60 seconds over
+            the past 10 minutes. This may indicate a slow sandbox backend, a tool
+            call hanging on an external dependency, or budget exhaustion causing
+            repeated retries.
+          runbook_url: "https://aetheros.docs/runbooks/high-latency"
+
+      - alert: AetherOSCriticalStepLatency
+        expr: aetheros:step_duration_p99_ms:5m > 30000
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "AetherOS p99 step duration exceeds 30s"
+          description: >
+            Individual governed steps are taking over 30 seconds at the 99th
+            percentile. Investigate sandbox backend timeouts or MCP adapter
+            connectivity.
+          runbook_url: "https://aetheros.docs/runbooks/step-latency"
+
+      # ── Availability alerts ────────────────────────────────────────────────
+
+      - alert: AetherOSRunsHalting
+        expr: rate(aetheros_runs_halted_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "AetherOS runs are halting (not completing)"
+          description: >
+            Governed runs are reaching a halted (non-completed) terminal state.
+            Halts occur on policy denial, budget exhaustion, sandbox errors, or
+            graceful drain. Check /admin/policy/deny-rate and /admin/runs for details.
+          runbook_url: "https://aetheros.docs/runbooks/runs-halting"
+
+      # ── Saturation alerts ──────────────────────────────────────────────────
+
+      - alert: AetherOSHighBudgetThroughput
+        expr: aetheros:budget_throughput_minor_per_sec:5m > 10000
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "AetherOS budget spend rate is unusually high"
+          description: >
+            Budget is being consumed at more than 10,000 minor units/second.
+            This may indicate a runaway agent or an unusually expensive tool
+            invocation pattern. Review /admin/tenants/{id}/budget.
+          runbook_url: "https://aetheros.docs/runbooks/budget-throughput"

@@ -49,6 +49,8 @@ Rate limiting (Phase 17):
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -157,16 +159,34 @@ def create_app(
     service: RunService | None = None,
     auth_service: "AuthService | None" = None,
     audit_config: "AuditConfig | None" = None,
+    drain_timeout_seconds: int = 30,
 ) -> "FastAPI":
-    """Build the FastAPI app. A custom RunService and AuthService can be injected for tests."""
-    app = FastAPI(title="AetherOS Control Plane API", version="0.9.0")
+    """Build the FastAPI app. A custom RunService and AuthService can be injected for tests.
+
+    On shutdown (SIGTERM / uvicorn lifespan event), the app drains all in-flight runs
+    via RunService.drain() before the process exits — guaranteeing every run has a
+    terminal ledger entry. See Phase 23 for graceful shutdown details.
+    """
+    svc = service or RunService()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Startup: nothing to initialize (RunService initializes itself).
+        yield
+        # Shutdown: drain all in-flight runs before the process exits.
+        drain_secs = drain_timeout_seconds
+        try:
+            await asyncio.to_thread(svc.drain, drain_secs)
+        except Exception:
+            pass  # best-effort drain on shutdown
+
+    app = FastAPI(title="AetherOS Control Plane API", version="0.9.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],  # local desktop app; tighten for any networked deployment
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    svc = service or RunService()
     app.state.service = svc
 
     # Build the AuthService from config if not injected (allows tests to inject a custom one).
@@ -415,6 +435,8 @@ def create_app(
         _check_rate(tenant_id, "runs:create")
         try:
             run = svc.create_run(req.intent, req.submitted_by, req.budget_minor, tenant_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
         except UnknownTenant:
             raise HTTPException(status_code=404, detail="unknown tenant")
         return run.to_view()
@@ -606,6 +628,26 @@ def create_app(
                 for a in cfg.constitution.articles
             ],
         }
+
+    @app.get("/config/alerting")
+    def alerting_rules() -> Any:
+        """Return the Prometheus alerting and recording rules for AetherOS.
+
+        Returns the raw YAML text of config/alerting/rules.yml so operators
+        can pipe it directly into their Prometheus configuration:
+            curl http://localhost:8765/config/alerting > rules.yml
+
+        The YAML follows Prometheus rule group format (prometheus.io/docs 2023).
+        Recording rules pre-compute the four golden signal rates (deny rate,
+        completion rate, duration p95/p99, budget throughput). Alerting rules
+        fire on thresholds derived from the OTEL instruments defined in Phase 20.
+        """
+        from pathlib import Path
+        from fastapi.responses import PlainTextResponse
+        rules_path = Path(__file__).parent.parent.parent / "config" / "alerting" / "rules.yml"
+        if not rules_path.exists():
+            raise HTTPException(status_code=404, detail="alerting rules file not found")
+        return PlainTextResponse(content=rules_path.read_text(), media_type="text/yaml")
 
     # ── tenants (multi-tenant workspace isolation) ────────────────────────────
     @app.get("/tenants")

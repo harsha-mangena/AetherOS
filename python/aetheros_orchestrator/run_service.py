@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -287,6 +288,12 @@ class RunService:
         self._adapter = adapter or default_incident_adapter()
         self._runs: dict[str, RunState] = {}
         self._lock = threading.Lock()
+        # Phase 23: graceful drain. When drain() is called (e.g. on SIGTERM),
+        # _draining is set to True. advance() checks this flag before each step
+        # and halts the run with reason "service draining" instead of executing it.
+        # This guarantees a terminal ledger entry for every in-flight run before exit.
+        self._draining: bool = False
+        self._drain_complete = threading.Event()
         # For the MVP demo, model an agent that has already earned a track record so
         # infra mutations are policy-allowed (still gated by human approval). Real
         # deployments would load persisted autonomy per agent.
@@ -417,6 +424,8 @@ class RunService:
         budget_minor: int = 100_000,
         tenant_id: str | None = None,
     ) -> RunState:
+        if self._draining:
+            raise RuntimeError("service is draining — no new runs accepted")
         tid = self._resolve_tenant(tenant_id)
         tenant = self._tenants.get(tid)
         # Per-tenant budget ceiling: a tenant can cap spend below the requested budget.
@@ -485,6 +494,10 @@ class RunService:
         if run.status in (RunStatus.COMPLETED, RunStatus.HALTED):
             return run
 
+        # Refuse to start new work if the service is draining.
+        if self._draining:
+            return self._drain_halt(run)
+
         tracer = _tracing.get_tracer()
         with tracer.start_as_current_span(
             "aetheros.run.advance",
@@ -498,6 +511,10 @@ class RunService:
 
             while run.cursor < len(run.plan.steps):
                 step = run.plan.steps[run.cursor]
+
+                # Check drain flag before each step — allows current step to complete.
+                if self._draining:
+                    return self._drain_halt(run)
 
                 # Pause for human approval before processing a gated step.
                 if run.ctx.requires_approval(step):
@@ -847,6 +864,60 @@ class RunService:
             run.ctx.autonomy.record_success(run.ctx.agent.agent_id)
         self._persist_run(run)
         return run
+
+    def _drain_halt(self, run: "RunState") -> "RunState":
+        """Record a graceful-drain halt entry in the ledger and finalize the run."""
+        if run.status in (RunStatus.COMPLETED, RunStatus.HALTED):
+            return run
+        run.denied_reason = "service draining — run halted gracefully"
+        run.ctx.ledger.append(
+            "control-plane",
+            "run.drain_halted",
+            {
+                "plan_id": run.plan.plan_id,
+                "cursor": run.cursor,
+                "total_cost_minor": run.total_cost_minor,
+                "reason": "service draining",
+            },
+        )
+        return self._finalize(run, completed=False)
+
+    def drain(self, timeout_seconds: int = 30) -> int:
+        """Gracefully halt all in-flight runs and wait for them to reach terminal state.
+
+        Sets the drain flag so advance() halts any new step execution. Then waits
+        up to timeout_seconds for all runs currently in RUNNING status to reach a
+        terminal state. Returns the number of runs that were drained (halted during
+        the drain window).
+
+        This is called by the FastAPI lifespan shutdown handler (via asyncio.to_thread)
+        so it does not block the event loop.
+
+        Standards: Kubernetes Graceful Termination (k8s docs v1.29 §Pod Lifecycle)
+        recommends draining in-flight work within terminationGracePeriodSeconds (default 30s).
+        """
+        self._draining = True
+        deadline = time.monotonic() + timeout_seconds
+        drained = 0
+
+        while time.monotonic() < deadline:
+            with self._lock:
+                running = [r for r in self._runs.values() if r.status == RunStatus.RUNNING]
+            if not running:
+                break
+            # Drain each running run.
+            for run in running:
+                if run.status == RunStatus.RUNNING:
+                    self._drain_halt(run)
+                    drained += 1
+            time.sleep(0.05)  # 50ms poll — allows advance() to see the flag
+
+        return drained
+
+    @property
+    def is_draining(self) -> bool:
+        """True if the service is in drain mode (no new steps will be executed)."""
+        return self._draining
 
     # ── analytics ──────────────────────────────────────────────────────────────
 
