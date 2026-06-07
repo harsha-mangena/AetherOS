@@ -21,6 +21,17 @@ Endpoints:
     GET  /runs/{run_id}/transparency      signed tree head (+ ?leaf=N inclusion proof)
     GET  /runs/{run_id}/transparency/consistency  append-only proof (?first_size=M)
     GET  /runs/{run_id}/transparency/cosigned     STH + independent witness cosignatures
+    POST /runs/{run_id}/cancel            cancel an in-progress run (records in ledger)
+    DELETE /runs/{run_id}                 remove a terminal run from the registry
+    POST /collaborations                  open (or retrieve) a tenant-scoped collaboration
+    GET  /collaborations                  list all collaborations for the requesting tenant
+    GET  /collaborations/{collaboration_id}  collaboration state + full shared ledger
+    POST /collaborations/{collaboration_id}/admit      admit an agent with a capability lease
+    POST /collaborations/{collaboration_id}/contribute  append an attributed entry to the chain
+    GET  /marketplace/catalog             list all governed skills in the marketplace
+    POST /marketplace/skills              publish a signed skill to the catalog
+    POST /marketplace/skills/{skill_id}/install  install a skill under governance for a tenant
+    GET  /marketplace/installed           list skills installed for the requesting tenant
 """
 
 from __future__ import annotations
@@ -64,6 +75,42 @@ class CreateTenantRequest(BaseModel):
     tenant_id: str | None = Field(None, description="Optional explicit slug id.")
     max_budget_minor: int | None = Field(None, ge=0)
     max_autonomy_tier: int | None = Field(None, ge=0)
+
+
+# ── Phase 11 request models ──────────────────────────────────────────────────
+
+class OpenCollaborationRequest(BaseModel):
+    collaboration_id: str = Field(..., description="Unique identifier for the shared ledger.")
+
+
+class AdmitAgentRequest(BaseModel):
+    agent_id: str = Field(..., description="The agent to admit.")
+    lease: dict = Field(..., description="CapabilityLease JSON (as from lease.to_dict()).")
+
+
+class ContributeRequest(BaseModel):
+    agent_id: str = Field(..., description="The contributing agent id.")
+    event_type: str = Field(..., description="Semantic event label (e.g. 'agent.analysis').")
+    payload: dict = Field(default_factory=dict, description="Arbitrary structured payload.")
+
+
+class PublishSkillRequest(BaseModel):
+    manifest: dict = Field(
+        ...,
+        description=(
+            "Skill manifest fields: skill_id, version, publisher_agent_id, "
+            "publisher_public_key, required_scopes, declared_tools, description."
+        ),
+    )
+    signature: str = Field(..., description="Ed25519 hex signature over canonical manifest bytes.")
+
+
+class InstallSkillRequest(BaseModel):
+    version: str = Field(..., description="Version of the skill to install.")
+    permitted_scopes: list[str] = Field(
+        default_factory=list,
+        description="Scopes the tenant delegates to this skill (least-privilege gate).",
+    )
 
 
 def create_app(service: RunService | None = None) -> "FastAPI":
@@ -267,6 +314,147 @@ def create_app(service: RunService | None = None) -> "FastAPI":
     def get_tenant(tenant_id: str) -> dict[str, Any]:
         try:
             return svc.tenants.get(tenant_id).to_view()
+        except UnknownTenant:
+            raise HTTPException(status_code=404, detail="unknown tenant")
+
+    # ── run lifecycle (Phase 11) ──────────────────────────────────────────────
+
+    @app.post("/runs/{run_id}/cancel")
+    def cancel_run(run_id: str, x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
+        """Cancel a non-terminal run. The cancellation is recorded in the evidence ledger."""
+        try:
+            return svc.cancel_run(run_id, x_tenant_id).to_view()
+        except (KeyError, CrossTenantAccess):
+            raise HTTPException(status_code=404, detail="unknown run")
+
+    @app.delete("/runs/{run_id}", status_code=204)
+    def delete_run(run_id: str, x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> None:
+        """Remove a terminal (completed/halted) run from the service registry.
+
+        Returns 204 No Content on success. Active runs must be cancelled first.
+        """
+        try:
+            svc.delete_run(run_id, x_tenant_id)
+        except (KeyError, CrossTenantAccess):
+            raise HTTPException(status_code=404, detail="unknown run")
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+
+    # ── collaboration (Phase 11) ─────────────────────────────────────────────
+
+    @app.post("/collaborations", status_code=201)
+    def open_collaboration(
+        req: OpenCollaborationRequest, x_tenant_id: str = Header(DEFAULT_TENANT_ID)
+    ) -> dict[str, Any]:
+        """Open (or retrieve) a tenant-scoped shared ledger for multi-agent collaboration."""
+        try:
+            return svc.open_collaboration(req.collaboration_id, x_tenant_id)
+        except UnknownTenant:
+            raise HTTPException(status_code=404, detail="unknown tenant")
+
+    @app.get("/collaborations")
+    def list_collaborations(x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
+        """List all collaborations visible to the requesting tenant."""
+        try:
+            return {"tenant_id": x_tenant_id, "collaborations": svc.list_collaborations(x_tenant_id)}
+        except UnknownTenant:
+            raise HTTPException(status_code=404, detail="unknown tenant")
+
+    @app.get("/collaborations/{collaboration_id}")
+    def get_collaboration(
+        collaboration_id: str, x_tenant_id: str = Header(DEFAULT_TENANT_ID)
+    ) -> dict[str, Any]:
+        """Return a collaboration's full state and tamper-evident shared ledger."""
+        try:
+            return svc.get_collaboration(collaboration_id, x_tenant_id)
+        except (CrossTenantAccess, KeyError):
+            raise HTTPException(status_code=404, detail="unknown collaboration")
+        except UnknownTenant:
+            raise HTTPException(status_code=404, detail="unknown tenant")
+
+    @app.post("/collaborations/{collaboration_id}/admit", status_code=201)
+    def admit_agent(
+        collaboration_id: str,
+        req: AdmitAgentRequest,
+        x_tenant_id: str = Header(DEFAULT_TENANT_ID),
+    ) -> dict[str, Any]:
+        """Admit an agent to a collaboration, verifying its capability lease signature."""
+        try:
+            return svc.admit_to_collaboration(
+                collaboration_id, req.agent_id, req.lease, x_tenant_id
+            )
+        except (CrossTenantAccess, KeyError):
+            raise HTTPException(status_code=404, detail="unknown collaboration")
+        except UnknownTenant:
+            raise HTTPException(status_code=404, detail="unknown tenant")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/collaborations/{collaboration_id}/contribute", status_code=201)
+    def contribute(
+        collaboration_id: str,
+        req: ContributeRequest,
+        x_tenant_id: str = Header(DEFAULT_TENANT_ID),
+    ) -> dict[str, Any]:
+        """Append an attributed, tamper-evident entry to the collaboration's shared ledger."""
+        try:
+            return svc.contribute_to_collaboration(
+                collaboration_id, req.agent_id, req.event_type, req.payload, x_tenant_id
+            )
+        except (CrossTenantAccess, KeyError):
+            raise HTTPException(status_code=404, detail="unknown collaboration")
+        except UnknownTenant:
+            raise HTTPException(status_code=404, detail="unknown tenant")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    # ── marketplace (Phase 11) ────────────────────────────────────────────────
+
+    @app.get("/marketplace/catalog")
+    def marketplace_catalog() -> dict[str, Any]:
+        """List all governed skills available in the marketplace catalog."""
+        return {"skills": svc.marketplace_catalog()}
+
+    @app.post("/marketplace/skills", status_code=201)
+    def publish_skill(req: PublishSkillRequest) -> dict[str, Any]:
+        """Publish a signed skill to the marketplace catalog.
+
+        The Ed25519 signature must verify over the manifest's canonical bytes.
+        Raises 400 if the signature is invalid.
+        """
+        try:
+            return svc.marketplace_publish(req.manifest, req.signature)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/marketplace/skills/{skill_id}/install", status_code=201)
+    def install_skill(
+        skill_id: str,
+        req: InstallSkillRequest,
+        x_tenant_id: str = Header(DEFAULT_TENANT_ID),
+    ) -> dict[str, Any]:
+        """Install a marketplace skill under the full governance gate for a tenant.
+
+        Verifies Ed25519 origin, enforces least-privilege scope delegation, and
+        evaluates constitutional supremacy. Returns 404 if skill not in catalog,
+        400 if any governance check fails.
+        """
+        try:
+            return svc.marketplace_install(
+                skill_id, req.version, x_tenant_id, req.permitted_scopes
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except UnknownTenant:
+            raise HTTPException(status_code=404, detail="unknown tenant")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/marketplace/installed")
+    def marketplace_installed(x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
+        """List all skills installed for the requesting tenant."""
+        try:
+            return {"tenant_id": x_tenant_id, "installed": svc.marketplace_installed(x_tenant_id)}
         except UnknownTenant:
             raise HTTPException(status_code=404, detail="unknown tenant")
 

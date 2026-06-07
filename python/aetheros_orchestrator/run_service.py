@@ -44,6 +44,9 @@ from .tenancy import (
     CrossTenantAccess,
     TenantRegistry,
 )
+from .collaboration import CollaborationRegistry, CollaborationError, NotAMember, MembershipRevoked
+from .marketplace import SkillMarketplace, SignedSkill, SkillManifest, MarketplaceError
+from .constitution import ConstitutionEngine
 
 
 class RunStatus:
@@ -156,6 +159,12 @@ class RunService:
         # Built once and reused across calls so each witness retains the last root it
         # endorsed per log (run) — which is what makes the consistency check meaningful.
         self._witness_registry = self._build_witness_registry()
+        # Phase 11: multi-agent collaboration registry (tenant-isolated shared ledgers).
+        self._collaborations = CollaborationRegistry()
+        # Phase 11: governed skill marketplace (Ed25519 origin + constitution gate).
+        self._marketplace = SkillMarketplace(
+            constitution=ConstitutionEngine.from_config(self._config)
+        )
 
     def _build_witness_registry(self):
         """Construct the config-driven witness panel (lazy import; zero-hardcoding)."""
@@ -369,6 +378,217 @@ class RunService:
             )
         )
         return True
+
+    # ── run lifecycle (Phase 11) ─────────────────────────────────────────────
+
+    def cancel_run(self, run_id: str, tenant_id: str | None = None) -> RunState:
+        """Cancel a run that has not yet reached a terminal state.
+
+        A cancelled run transitions to HALTED with a cancellation note in the evidence
+        ledger so the audit trail records who/when/why the run was terminated early.
+        Already-COMPLETED or already-HALTED runs are returned unchanged (idempotent).
+        """
+        run = self.get(run_id, tenant_id)
+        if run.status in (RunStatus.COMPLETED, RunStatus.HALTED):
+            return run
+        run.ctx.ledger.append(
+            "control-plane",
+            "run.cancelled",
+            {"run_id": run_id, "prior_status": run.status},
+        )
+        run.status = RunStatus.HALTED
+        run.denied_reason = "cancelled by operator"
+        return run
+
+    def delete_run(self, run_id: str, tenant_id: str | None = None) -> None:
+        """Remove a run from the service registry.
+
+        Only terminal (COMPLETED or HALTED) runs may be deleted; active runs must
+        be cancelled first. Raises ValueError for non-terminal runs to prevent
+        accidental loss of in-flight evidence.
+        """
+        run = self.get(run_id, tenant_id)
+        if run.status not in (RunStatus.COMPLETED, RunStatus.HALTED):
+            raise ValueError(
+                f"run {run_id} is in state '{run.status}' — cancel it before deleting"
+            )
+        with self._lock:
+            self._runs.pop(run_id, None)
+
+    # ── collaboration (Phase 11) ─────────────────────────────────────────────
+
+    def open_collaboration(self, collaboration_id: str, tenant_id: str | None = None) -> dict[str, Any]:
+        """Open (or retrieve) a tenant-scoped shared ledger for multi-agent collaboration."""
+        tid = self._resolve_tenant(tenant_id)
+        collab = self._collaborations.open(collaboration_id, tid)
+        return {
+            "collaboration_id": collab.collaboration_id,
+            "tenant_id": collab.tenant_id,
+            "member_count": len(collab._members),  # noqa: SLF001 — same package
+            "ledger_length": collab.ledger.length,
+        }
+
+    def list_collaborations(self, tenant_id: str | None = None) -> list[dict[str, Any]]:
+        """List all collaborations visible to a tenant."""
+        tid = self._resolve_tenant(tenant_id)
+        with self._collaborations._lock:  # noqa: SLF001 — same package
+            pairs = [
+                (cid, collab)
+                for (t, cid), collab in self._collaborations._collabs.items()  # noqa: SLF001
+                if t == tid
+            ]
+        return [
+            {
+                "collaboration_id": cid,
+                "tenant_id": tid,
+                "member_count": len(collab._members),  # noqa: SLF001
+                "ledger_length": collab.ledger.length,
+            }
+            for cid, collab in pairs
+        ]
+
+    def admit_to_collaboration(
+        self,
+        collaboration_id: str,
+        agent_id: str,
+        lease_dict: dict[str, Any],
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Admit an agent to a collaboration, verifying its capability lease.
+
+        `lease_dict` is the JSON representation of a CapabilityLease (as produced by
+        `lease.to_dict()`). The lease signature is verified inside `SharedLedger.admit`.
+        """
+        import aetheros
+        tid = self._resolve_tenant(tenant_id)
+        try:
+            collab = self._collaborations.get(collaboration_id, tid)
+        except Exception:
+            collab = self._collaborations.open(collaboration_id, tid)
+        import json as _json
+        lease = aetheros.CapabilityLease.from_json(_json.dumps(lease_dict))
+        membership = collab.admit(tid, agent_id, lease)
+        return {
+            "collaboration_id": collaboration_id,
+            "agent_id": membership.agent_id,
+            "lease_id": membership.lease_id,
+            "admitted_at_seq": membership.admitted_at_seq,
+        }
+
+    def contribute_to_collaboration(
+        self,
+        collaboration_id: str,
+        agent_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Append an attributed entry to a collaboration's shared ledger."""
+        tid = self._resolve_tenant(tenant_id)
+        collab = self._collaborations.get(collaboration_id, tid)
+        seq, entry_hash = collab.contribute(tid, agent_id, event_type, payload)
+        return {
+            "collaboration_id": collaboration_id,
+            "seq": seq,
+            "entry_hash": entry_hash,
+            "agent_id": agent_id,
+            "event_type": event_type,
+        }
+
+    def get_collaboration(self, collaboration_id: str, tenant_id: str | None = None) -> dict[str, Any]:
+        """Fetch a collaboration's state and its full tamper-evident ledger."""
+        tid = self._resolve_tenant(tenant_id)
+        collab = self._collaborations.get(collaboration_id, tid)
+        return {
+            "collaboration_id": collab.collaboration_id,
+            "tenant_id": collab.tenant_id,
+            "verified": collab.verify(tid),
+            "members": [
+                {"agent_id": m.agent_id, "lease_id": m.lease_id, "admitted_at_seq": m.admitted_at_seq}
+                for m in collab.members(tid)
+            ],
+            "ledger_length": collab.ledger.length,
+            "entries": [
+                {
+                    "seq": e.seq,
+                    "actor": e.actor,
+                    "event_type": e.event_type,
+                    "payload": e.payload,
+                    "entry_hash": e.entry_hash,
+                }
+                for e in collab.ledger.entries()
+            ],
+        }
+
+    # ── marketplace (Phase 11) ────────────────────────────────────────────────
+
+    def marketplace_publish(self, manifest_dict: dict[str, Any], signature: str) -> dict[str, Any]:
+        """Publish a signed skill to the governed marketplace catalog.
+
+        The manifest dict must contain: skill_id, version, publisher_agent_id,
+        publisher_public_key, required_scopes (list), declared_tools (list),
+        description (optional). Raises MarketplaceError if the signature is invalid.
+        """
+        manifest = SkillManifest(
+            skill_id=manifest_dict["skill_id"],
+            version=manifest_dict["version"],
+            publisher_agent_id=manifest_dict["publisher_agent_id"],
+            publisher_public_key=manifest_dict["publisher_public_key"],
+            required_scopes=tuple(manifest_dict.get("required_scopes", [])),
+            declared_tools=tuple(manifest_dict.get("declared_tools", [])),
+            description=manifest_dict.get("description", ""),
+        )
+        signed = SignedSkill(manifest=manifest, signature=signature)
+        self._marketplace.publish(signed)
+        return manifest.to_view()
+
+    def marketplace_catalog(self) -> list[dict[str, Any]]:
+        """Return all skills listed in the governed marketplace catalog."""
+        return [m.to_view() for m in self._marketplace.catalog()]
+
+    def marketplace_install(
+        self,
+        skill_id: str,
+        version: str,
+        tenant_id: str | None = None,
+        permitted_scopes: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Install a catalog skill under the full governance gate for a tenant.
+
+        Verifies Ed25519 origin, checks least-privilege scope delegation, and
+        evaluates constitutional supremacy before admitting the skill.
+        """
+        tid = self._resolve_tenant(tenant_id)
+        # Look up the signed skill from the catalog by id@version key.
+        key = f"{skill_id}@{version}"
+        with self._marketplace._lock:  # noqa: SLF001 — same package
+            signed = self._marketplace._catalog.get(key)  # noqa: SLF001
+        if signed is None:
+            raise KeyError(f"skill {key!r} not found in catalog")
+        scopes = set(permitted_scopes or [])
+        installed = self._marketplace.install(signed, tid, scopes)
+        return {
+            "skill_id": installed.manifest.skill_id,
+            "version": installed.manifest.version,
+            "tenant_id": tid,
+            "installed_at_seq": installed.installed_at_seq,
+            "required_scopes": sorted(installed.manifest.required_scopes),
+            "declared_tools": sorted(installed.manifest.declared_tools),
+        }
+
+    def marketplace_installed(self, tenant_id: str | None = None) -> list[dict[str, Any]]:
+        """List all skills installed under a tenant."""
+        tid = self._resolve_tenant(tenant_id)
+        return [
+            {
+                "skill_id": s.manifest.skill_id,
+                "version": s.manifest.version,
+                "installed_at_seq": s.installed_at_seq,
+                "required_scopes": sorted(s.manifest.required_scopes),
+                "declared_tools": sorted(s.manifest.declared_tools),
+            }
+            for s in self._marketplace.installed(tid)
+        ]
 
     def _finalize(self, run: RunState, completed: bool) -> RunState:
         if run.status in (RunStatus.COMPLETED, RunStatus.HALTED):
