@@ -13,6 +13,8 @@
 //!   the reproducible byte representation shared with the Python bindings.
 //! - [`policy`]: the integrity-critical policy evaluation core (deny-overrides).
 //! - [`constitution`]: supreme, inviolable governance articles, evaluated above policy.
+//! - [`transparency`]: RFC 6962 Merkle transparency log with signed tree heads and
+//!   inclusion/consistency proofs over the evidence ledger.
 //! - [`autonomy`]: earned-autonomy tier tracking from a governed track record.
 //! - [`glob`]: minimal dependency-free glob matching for policy patterns.
 //! - [`error`]: the crate-wide [`error::CoreError`] type.
@@ -37,6 +39,7 @@ pub mod glob;
 pub mod identity;
 pub mod lease;
 pub mod policy;
+pub mod transparency;
 
 pub use autonomy::AutonomyRecord;
 pub use constitution::{ActionContext, Article, Constitution, Judgment, Verdict};
@@ -45,6 +48,10 @@ pub use evidence::{EvidenceEntry, EvidenceLedger, GENESIS_HASH};
 pub use identity::{AgentDescriptor, AgentIdentity};
 pub use lease::{Budget, BudgetLimit, CapabilityLease, LeaseBody};
 pub use policy::{Effect, PolicyDecision, PolicyRequest, PolicyRule, PolicySet};
+pub use transparency::{
+    verify_consistency, verify_inclusion, ConsistencyProof, InclusionProof, SignedTreeHead,
+    TransparencyLog, TreeHeadContent,
+};
 
 /// The semantic version of the core crate, surfaced for diagnostics and the UI.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -42,6 +42,17 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// SHA-256 of raw bytes as a raw 32-byte digest.
+///
+/// The Merkle transparency log ([`crate::transparency`]) hashes digests of digests, so it
+/// needs the raw bytes (not hex) to keep the tree's internal node inputs compact and to
+/// match RFC 6962's binary hashing exactly.
+pub fn sha256_bytes(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher.finalize().into()
+}
+
 /// SHA-256 over the concatenation of two byte slices, returned as lowercase hex.
 ///
 /// Used by the evidence ledger to chain `prev_hash` with the canonical content of
