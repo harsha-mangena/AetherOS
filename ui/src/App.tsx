@@ -5,9 +5,11 @@ import { ExecutionCanvas } from "./surfaces/ExecutionCanvas";
 import { EvidenceViewer } from "./surfaces/EvidenceViewer";
 import { AdminSurface } from "./surfaces/AdminSurface";
 import { AnalyticsSurface } from "./surfaces/AnalyticsSurface";
+import { ConstitutionSurface } from "./surfaces/ConstitutionSurface";
+import { ComplianceSurface } from "./surfaces/ComplianceSurface";
 import { TenantSwitcher } from "./surfaces/TenantSwitcher";
 
-type Tab = "console" | "canvas" | "evidence" | "admin" | "analytics";
+type Tab = "console" | "canvas" | "evidence" | "analytics" | "compliance" | "constitution" | "admin";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("console");
@@ -55,6 +57,12 @@ export default function App() {
           <button className={tab === "analytics" ? "active" : ""} onClick={() => setTab("analytics")}>
             Analytics
           </button>
+          <button className={tab === "compliance" ? "active" : ""} onClick={() => setTab("compliance")}>
+            Compliance
+          </button>
+          <button className={tab === "constitution" ? "active" : ""} onClick={() => setTab("constitution")}>
+            Constitution
+          </button>
           <button className={tab === "admin" ? "active" : ""} onClick={() => setTab("admin")}>
             Governance Admin
           </button>
@@ -78,6 +86,8 @@ export default function App() {
         {tab === "canvas" && <ExecutionCanvas run={run} setRun={setRun} />}
         {tab === "evidence" && <EvidenceViewer run={run} />}
         {tab === "analytics" && <AnalyticsSurface tenantId={tenant} />}
+        {tab === "compliance" && <ComplianceSurface tenantId={tenant} />}
+        {tab === "constitution" && <ConstitutionSurface />}
         {tab === "admin" && <AdminSurface />}
       </main>
     </div>

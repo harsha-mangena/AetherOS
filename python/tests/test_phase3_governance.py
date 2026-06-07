@@ -222,4 +222,11 @@ def test_prod_delete_is_never_authorized():
     )
     decision = ctx.authorize_step(step)
     assert decision.allowed is False
-    assert decision.deciding_rule_id == "deny-prod-delete"
+    # Supremacy (Phase 7): a production-deletion is now caught by the constitution's
+    # inviolable article *before* policy is consulted. The action is still never
+    # authorized; the deciding layer is simply the supreme one. If the constitution did
+    # not catch it, the policy rule `deny-prod-delete` must.
+    assert (
+        decision.constitutional_article_id == "no-autonomous-prod-deletion"
+        or decision.deciding_rule_id == "deny-prod-delete"
+    )

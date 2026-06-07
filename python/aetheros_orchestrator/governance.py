@@ -21,6 +21,7 @@ from aetheros.lease import LeaseDenied
 
 from .autonomy import AutonomyTracker
 from .config import AetherConfig
+from .constitution import ConstitutionEngine
 from .models import Intent, PlanStep
 from .policy import PolicyEngine
 
@@ -34,11 +35,13 @@ class GovernanceDecision:
         reason: str | None = None,
         requires_approval: bool = False,
         deciding_rule_id: str | None = None,
+        constitutional_article_id: str | None = None,
     ) -> None:
         self.allowed = allowed
         self.reason = reason
         self.requires_approval = requires_approval
         self.deciding_rule_id = deciding_rule_id
+        self.constitutional_article_id = constitutional_article_id
 
     def __bool__(self) -> bool:
         return self.allowed
@@ -55,6 +58,7 @@ class GovernanceContext:
         ledger: EvidenceLedger,
         policy: PolicyEngine | None = None,
         autonomy: AutonomyTracker | None = None,
+        constitution: ConstitutionEngine | None = None,
     ) -> None:
         self._config = config
         self.control_plane = control_plane
@@ -63,6 +67,7 @@ class GovernanceContext:
         self.lease: CapabilityLease | None = None
         self.policy = policy or PolicyEngine.from_config(config)
         self.autonomy = autonomy or AutonomyTracker.from_config(config)
+        self.constitution = constitution or ConstitutionEngine.from_config(config)
 
     @property
     def autonomy_tier(self) -> int:
@@ -80,13 +85,22 @@ class GovernanceContext:
         agent: AgentIdentity | None = None,
         policy: PolicyEngine | None = None,
         autonomy: AutonomyTracker | None = None,
+        constitution: ConstitutionEngine | None = None,
     ) -> "GovernanceContext":
         """Bootstrap a governance context: identities, ledger, and a signed lease
         scoped to exactly the capabilities the plan requires (least privilege)."""
         ledger = ledger or EvidenceLedger()
         control_plane = control_plane or AgentIdentity.generate("control-plane")
         agent = agent or AgentIdentity.generate("execution-agent")
-        ctx = cls(config, control_plane, agent, ledger, policy=policy, autonomy=autonomy)
+        ctx = cls(
+            config,
+            control_plane,
+            agent,
+            ledger,
+            policy=policy,
+            autonomy=autonomy,
+            constitution=constitution,
+        )
         ctx.issue_lease(intent, required_scopes)
         return ctx
 
@@ -122,6 +136,16 @@ class GovernanceContext:
         """
         if self._config.governance.require_human_approval and step.high_impact:
             return True
+        # The constitution can demand a human gate before policy is even consulted.
+        verdict = self.constitution.judge(
+            scope=step.scope,
+            tool=step.tool,
+            autonomy_tier=self.autonomy_tier,
+            cost_minor=step.estimated_cost_minor,
+            high_impact=step.high_impact,
+        )
+        if verdict.permitted and verdict.requires_approval:
+            return True
         decision = self.policy.evaluate(
             scope=step.scope,
             tool=step.tool,
@@ -140,6 +164,35 @@ class GovernanceContext:
         and a policy denial is also counted as an autonomy violation.
         """
         assert self.lease is not None, "lease not issued"
+
+        # Supreme layer: the constitution is consulted before policy. A constitutional
+        # forbid is absolute and short-circuits the entire pipeline; no policy allow and
+        # no autonomy tier can override it. It is also counted as an autonomy violation.
+        verdict = self.constitution.judge(
+            scope=step.scope,
+            tool=step.tool,
+            autonomy_tier=self.autonomy_tier,
+            cost_minor=step.estimated_cost_minor,
+            high_impact=step.high_impact,
+        )
+        if not verdict.permitted:
+            self.autonomy.record_violation(self.agent.agent_id)
+            self.ledger.append(
+                "control-plane",
+                "constitution.violation",
+                {
+                    "step_id": step.step_id,
+                    "scope": step.scope,
+                    "article_id": verdict.article_id,
+                    "principle": verdict.principle,
+                    "reason": verdict.reason,
+                },
+            )
+            return GovernanceDecision(
+                False,
+                verdict.reason,
+                constitutional_article_id=verdict.article_id,
+            )
 
         decision = self.policy.evaluate(
             scope=step.scope,

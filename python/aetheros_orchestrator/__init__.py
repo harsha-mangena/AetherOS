@@ -28,6 +28,30 @@ from .models import (
 )
 from .planner import LLMPlanner, Planner, RuleBasedPlanner
 from .policy import PolicyDecision, PolicyEngine
+from .constitution import ConstitutionEngine, Judgment as ConstitutionalJudgment
+from .collaboration import (
+    CollaborationRegistry,
+    Membership,
+    MembershipRevoked,
+    NotAMember,
+    SharedLedger,
+)
+from .compliance import (
+    ComplianceExporter,
+    ComplianceReport,
+    ControlFinding,
+    ControlStatus,
+)
+from .marketplace import (
+    ConstitutionallyForbidden,
+    InstalledSkill,
+    ScopeNotPermitted,
+    SignatureInvalid,
+    SignedSkill,
+    SkillManifest,
+    SkillMarketplace,
+    sign_skill,
+)
 from .gateway import EgressDenied, GatewayConfig, ProxyGateway
 from .mcp_adapter import (
     MCPAdapter,
@@ -118,6 +142,28 @@ __all__ = [
     # policy / autonomy (Phase 3)
     "PolicyEngine",
     "PolicyDecision",
+    "ConstitutionEngine",
+    "ConstitutionalJudgment",
+    # cross-agent collaboration (Phase 7)
+    "CollaborationRegistry",
+    "SharedLedger",
+    "Membership",
+    "NotAMember",
+    "MembershipRevoked",
+    # compliance export (Phase 7)
+    "ComplianceExporter",
+    "ComplianceReport",
+    "ControlFinding",
+    "ControlStatus",
+    # governed-skill marketplace (Phase 7)
+    "SkillMarketplace",
+    "SkillManifest",
+    "SignedSkill",
+    "InstalledSkill",
+    "sign_skill",
+    "SignatureInvalid",
+    "ScopeNotPermitted",
+    "ConstitutionallyForbidden",
     "AutonomyTracker",
     # MCP + sandbox (Phase 4)
     "MCPAdapter",

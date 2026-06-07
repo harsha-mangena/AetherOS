@@ -94,6 +94,27 @@ autonomy:
   # Maximum autonomy tier an agent can reach.
   max_tier: 3
 
+constitution:
+  # The supreme governance layer. Articles are evaluated in the Rust core *before*
+  # policy. A "forbid" is absolute — no policy allow and no autonomy tier overrides it.
+  # A "require_approval" forces a human gate even if policy would have allowed silently.
+  # The constitution can only ever tighten behaviour, never grant authority.
+  version: "v1"
+  articles:
+    - id: "no-autonomous-prod-deletion"
+      principle: "Production data must never be deleted by an agent without explicit human approval."
+      verdict: "forbid"
+      scope: "*:delete:prod*"
+    - id: "no-credential-exfiltration"
+      principle: "Agents must never exfiltrate secrets or credentials."
+      verdict: "forbid"
+      scope: "secrets:*"
+    - id: "human-gate-high-impact-spend"
+      principle: "Any high-impact action above the spend floor requires a human in the loop."
+      verdict: "require_approval"
+      high_impact: true
+      min_cost_minor: 5000
+
 sandbox:
   # Execution backend for governed tool calls. "local" = in-process sandbox with a
   # timeout guard + egress control + provenance. A native/E2B backend drops in here.

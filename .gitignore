@@ -57,3 +57,4 @@ secrets/
 *.ledger
 *.sqlite
 *.db
+tmp/

@@ -394,3 +394,34 @@ class RunService:
                 for e in ledger.entries()
             ],
         }
+
+    # ── compliance (Phase 7) ────────────────────────────────────────────────
+
+    def compliance(self, tenant_id: str | None = None) -> dict[str, Any]:
+        """Tenant-wide SOC2/GDPR compliance rollup, projected from the run ledgers.
+
+        Isolation-preserving: only this tenant's runs are evaluated. Each run ledger is an
+        independently verifiable trail; the tenant is attestable only if every run ledger
+        verifies, and compliant only if no control fails in any run.
+        """
+        from .compliance import ComplianceExporter
+
+        tid = self._resolve_tenant(tenant_id)
+        with self._lock:
+            runs = [(rid, r) for rid, r in self._runs.items() if r.tenant_id == tid]
+        exporter = ComplianceExporter()
+        reports = []
+        for rid, run in runs:
+            report = exporter.generate(run.ctx.ledger, tenant_id=tid)
+            view = report.to_view()
+            view["run_id"] = rid
+            reports.append(view)
+        attestable = all(r["attestable"] for r in reports) if reports else True
+        compliant = all(r["compliant"] for r in reports) if reports else True
+        return {
+            "tenant_id": tid,
+            "run_count": len(reports),
+            "attestable": attestable,
+            "compliant": compliant,
+            "reports": reports,
+        }

@@ -109,6 +109,52 @@ export interface AnalyticsView {
   integrity: { evidence_entries_scanned: number; all_ledgers_verified: boolean };
 }
 
+// ── Phase 7: constitution (supreme governance) + compliance export ──────────
+
+export interface ConstitutionArticle {
+  id: string;
+  principle: string;
+  verdict: string;
+  scope: string | null;
+  tool: string | null;
+  min_cost_minor: number | null;
+  high_impact_only: boolean | null;
+}
+
+export interface ConstitutionView {
+  version: string;
+  articles: ConstitutionArticle[];
+}
+
+export interface ControlFinding {
+  framework: string;
+  control_id: string;
+  title: string;
+  status: "pass" | "fail" | "not_applicable";
+  detail: string;
+  evidence_seqs: number[];
+}
+
+export interface ComplianceReport {
+  run_id: string;
+  tenant_id: string;
+  generated_at: string;
+  ledger_intact: boolean;
+  ledger_head: string;
+  entry_count: number;
+  attestable: boolean;
+  compliant: boolean;
+  findings: ControlFinding[];
+}
+
+export interface ComplianceView {
+  tenant_id: string;
+  run_count: number;
+  attestable: boolean;
+  compliant: boolean;
+  reports: ComplianceReport[];
+}
+
 const BASE = "/api";
 
 // The active tenant is held module-side and sent as X-Tenant-Id on every scoped call,
@@ -164,4 +210,7 @@ export const api = {
       body: JSON.stringify({ display_name }),
     }),
   analytics: () => req<AnalyticsView>("/analytics"),
+  // Phase 7
+  constitution: () => req<ConstitutionView>("/config/constitution"),
+  compliance: () => req<ComplianceView>("/compliance"),
 };

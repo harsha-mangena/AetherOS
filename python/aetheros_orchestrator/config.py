@@ -64,6 +64,25 @@ class PolicyConfig(BaseModel):
     rules: list[PolicyRuleConfig] = Field(default_factory=list)
 
 
+class ArticleConfig(BaseModel):
+    """One constitutional article: an inviolable principle and the actions it governs."""
+
+    id: str
+    principle: str
+    verdict: str = "forbid"  # "forbid" | "require_approval"
+    scope: str | None = None
+    tool: str | None = None
+    high_impact: bool | None = None
+    min_cost_minor: int | None = None
+
+
+class ConstitutionConfig(BaseModel):
+    """The supreme governance layer: articles evaluated above policy in the Rust core."""
+
+    version: str = "v0"
+    articles: list[ArticleConfig] = Field(default_factory=list)
+
+
 class AutonomyConfig(BaseModel):
     promotion_threshold: int = 5
     max_tier: int = 3
@@ -93,6 +112,7 @@ class AetherConfig(BaseModel):
     evidence: EvidenceConfig = Field(default_factory=EvidenceConfig)
     orchestration: OrchestrationConfig = Field(default_factory=OrchestrationConfig)
     policy: PolicyConfig = Field(default_factory=PolicyConfig)
+    constitution: ConstitutionConfig = Field(default_factory=ConstitutionConfig)
     autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
 

@@ -65,7 +65,7 @@ class CreateTenantRequest(BaseModel):
 
 def create_app(service: RunService | None = None) -> "FastAPI":
     """Build the FastAPI app. A custom RunService can be injected for tests."""
-    app = FastAPI(title="AetherOS Control Plane API", version="0.5.0")
+    app = FastAPI(title="AetherOS Control Plane API", version="0.7.0")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],  # local desktop app; tighten for any networked deployment
@@ -163,6 +163,36 @@ def create_app(service: RunService | None = None) -> "FastAPI":
             return svc.analytics(x_tenant_id)
         except UnknownTenant:
             raise HTTPException(status_code=404, detail="unknown tenant")
+
+    # ── compliance export (Phase 7: SOC2/GDPR, projected from the ledger) ─────
+
+    @app.get("/compliance")
+    def compliance(x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
+        try:
+            return svc.compliance(x_tenant_id)
+        except UnknownTenant:
+            raise HTTPException(status_code=404, detail="unknown tenant")
+
+    # ── constitution (Phase 7: supreme governance articles, read-only view) ───
+
+    @app.get("/config/constitution")
+    def constitution() -> dict[str, Any]:
+        cfg = load_config()
+        return {
+            "version": cfg.constitution.version,
+            "articles": [
+                {
+                    "id": a.id,
+                    "principle": a.principle,
+                    "verdict": a.verdict,
+                    "scope": a.scope,
+                    "tool": a.tool,
+                    "min_cost_minor": a.min_cost_minor,
+                    "high_impact_only": a.high_impact,
+                }
+                for a in cfg.constitution.articles
+            ],
+        }
 
     # ── tenants (multi-tenant workspace isolation) ────────────────────────────
     @app.get("/tenants")

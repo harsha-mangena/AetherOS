@@ -11,6 +11,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyType;
 
 use aether_core::autonomy::AutonomyRecord as CoreAutonomy;
+use aether_core::constitution::{ActionContext as CoreAction, Constitution as CoreConstitution};
 use aether_core::error::CoreError;
 use aether_core::evidence::EvidenceLedger as CoreLedger;
 use aether_core::identity::{verify_signature as core_verify, AgentIdentity as CoreIdentity};
@@ -306,6 +307,48 @@ impl PyPolicyEngine {
     }
 }
 
+/// A constitution engine wrapping the supreme Rust governance core.
+///
+/// Constructed from a JSON constitution document; judges JSON actions and returns JSON
+/// judgments. Article *authoring* lives in Python; the supremacy semantics (forbid is
+/// absolute, evaluated above policy, no tier exemption) live in Rust where they cannot
+/// be bypassed.
+#[pyclass(name = "ConstitutionEngine")]
+struct PyConstitutionEngine {
+    inner: CoreConstitution,
+}
+
+#[pymethods]
+impl PyConstitutionEngine {
+    /// Build a constitution engine from a JSON constitution document.
+    #[staticmethod]
+    fn from_json(json: String) -> PyResult<Self> {
+        let inner: CoreConstitution =
+            serde_json::from_str(&json).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(PyConstitutionEngine { inner })
+    }
+
+    /// The constitution's version label.
+    #[getter]
+    fn version(&self) -> String {
+        self.inner.version.clone()
+    }
+
+    /// Number of articles in the constitution.
+    #[getter]
+    fn article_count(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Judge a JSON action and return the judgment as a JSON string.
+    fn judge(&self, action_json: String) -> PyResult<String> {
+        let action: CoreAction = serde_json::from_str(&action_json)
+            .map_err(|e| PyValueError::new_err(format!("action_json: {e}")))?;
+        let judgment = self.inner.judge(&action);
+        serde_json::to_string(&judgment).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+}
+
 /// An agent's earned-autonomy record (governance state owned by the Rust core).
 #[pyclass(name = "AutonomyRecord")]
 struct PyAutonomyRecord {
@@ -379,6 +422,7 @@ fn _aether_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCapabilityLease>()?;
     m.add_class::<PyEvidenceLedger>()?;
     m.add_class::<PyPolicyEngine>()?;
+    m.add_class::<PyConstitutionEngine>()?;
     m.add_class::<PyAutonomyRecord>()?;
     m.add_function(wrap_pyfunction!(verify_signature, m)?)?;
     Ok(())
