@@ -431,6 +431,40 @@ class RunService:
             result["inclusion_proof"] = proof.to_dict()
         return result
 
+    def transparency_consistency(
+        self,
+        run_id: str,
+        first_size: int,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Append-only consistency proof from an earlier tree size to the current ledger.
+
+        An auditor who retained a prior Signed Tree Head (at `first_size`) can ask the log to
+        prove the ledger only grew since — never rewrote history. The server returns the proof
+        and a freshly signed current STH; the auditor checks
+        ``verify_consistency(proof, retained_old_root, current_sth.root_hash)`` against the
+        root it already holds. The server never needs to be trusted for the old root: a
+        non-prefix history cannot produce a passing proof against the retained root.
+        """
+        from .transparency import TransparencyLog
+
+        run = self.get(run_id, tenant_id)
+        ledger = run.ctx.ledger
+        log = TransparencyLog.from_ledger(ledger)
+        if first_size < 1 or first_size > log.size:
+            raise IndexError(
+                f"first_size {first_size} out of range for tree of size {log.size}"
+            )
+        now = datetime.now(timezone.utc).isoformat()
+        sth = log.signed_tree_head(run.ctx.control_plane, now)
+        return {
+            "run_id": run_id,
+            "first_size": first_size,
+            "current_size": log.size,
+            "consistency_proof": log.consistency_proof(first_size),
+            "signed_tree_head": sth.to_dict(),
+        }
+
     def compliance(self, tenant_id: str | None = None) -> dict[str, Any]:
         """Tenant-wide SOC2/GDPR compliance rollup, projected from the run ledgers.
 

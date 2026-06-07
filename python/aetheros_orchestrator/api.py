@@ -18,6 +18,8 @@ Endpoints:
     POST /runs/{run_id}/advance           execute until completion/halt/approval gate
     POST /runs/{run_id}/resume            apply a human approval decision, continue
     GET  /runs/{run_id}/evidence          verify + replay the tamper-evident ledger
+    GET  /runs/{run_id}/transparency      signed tree head (+ ?leaf=N inclusion proof)
+    GET  /runs/{run_id}/transparency/consistency  append-only proof (?first_size=M)
 """
 
 from __future__ import annotations
@@ -65,7 +67,7 @@ class CreateTenantRequest(BaseModel):
 
 def create_app(service: RunService | None = None) -> "FastAPI":
     """Build the FastAPI app. A custom RunService can be injected for tests."""
-    app = FastAPI(title="AetherOS Control Plane API", version="0.7.0")
+    app = FastAPI(title="AetherOS Control Plane API", version="0.9.0")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],  # local desktop app; tighten for any networked deployment
@@ -154,6 +156,36 @@ def create_app(service: RunService | None = None) -> "FastAPI":
             return svc.evidence(run_id, x_tenant_id)
         except (KeyError, CrossTenantAccess):
             raise HTTPException(status_code=404, detail="unknown run")
+
+    # ── transparency (Phase 8/9: RFC 6962 signed tree heads + proofs over the wire) ─
+
+    @app.get("/runs/{run_id}/transparency")
+    def transparency(
+        run_id: str,
+        leaf: int | None = None,
+        x_tenant_id: str = Header(DEFAULT_TENANT_ID),
+    ) -> dict[str, Any]:
+        """Signed Tree Head over a run's evidence ledger; optional ?leaf=N inclusion proof."""
+        try:
+            return svc.transparency(run_id, x_tenant_id, leaf_index=leaf)
+        except (KeyError, CrossTenantAccess):
+            raise HTTPException(status_code=404, detail="unknown run")
+        except IndexError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/runs/{run_id}/transparency/consistency")
+    def transparency_consistency(
+        run_id: str,
+        first_size: int,
+        x_tenant_id: str = Header(DEFAULT_TENANT_ID),
+    ) -> dict[str, Any]:
+        """Append-only consistency proof from ?first_size=M to the current ledger size."""
+        try:
+            return svc.transparency_consistency(run_id, first_size, x_tenant_id)
+        except (KeyError, CrossTenantAccess):
+            raise HTTPException(status_code=404, detail="unknown run")
+        except IndexError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     # ── analytics (per-tenant, projected from the evidence ledger) ────────────
 
