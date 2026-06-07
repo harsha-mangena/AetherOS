@@ -105,7 +105,8 @@ def test_eddsa_token_header_has_alg_and_kid():
     token = svc.issue_token("alpha", _ADMIN_SECRET)
     header = _jwt.get_unverified_header(token)
     assert header["alg"] == "EdDSA"
-    assert header["kid"] == "alpha"
+    # Phase 18: kid is versioned ("{tenant_id}#v{N}"); v1 on first issuance.
+    assert header["kid"] == "alpha#v1"
 
 
 # ── 2. round-trip ──────────────────────────────────────────────────────────────
@@ -251,7 +252,8 @@ def test_jwks_exports_public_okp_keys():
     svc.issue_token("beta", _ADMIN_SECRET)
     jwks = svc.jwks()
     kids = {k["kid"] for k in jwks["keys"]}
-    assert kids == {"alpha", "beta"}
+    # Phase 18: kids are versioned ("{tenant_id}#v{N}"); v1 on first issuance.
+    assert kids == {"alpha#v1", "beta#v1"}
     for k in jwks["keys"]:
         assert k["kty"] == "OKP"
         assert k["crv"] == "Ed25519"
@@ -305,7 +307,8 @@ def test_http_jwks_endpoint_is_public_and_lists_tenant_key():
     r = client.get("/auth/jwks")  # no Authorization header
     assert r.status_code == 200, r.text
     kids = {k["kid"] for k in r.json()["keys"]}
-    assert "alpha" in kids
+    # Phase 18: kid is versioned; v1 on first issuance.
+    assert "alpha#v1" in kids
 
 
 def test_http_forged_token_returns_401():

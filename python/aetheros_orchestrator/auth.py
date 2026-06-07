@@ -177,11 +177,14 @@ class AuthService:
         if self._algorithm == "EdDSA":
             assert self._keystore is not None  # set whenever algorithm == EdDSA
             signing_pem = self._keystore.private_pem(tenant_id)
+            # Phase 18: stamp the versioned kid so validators can select the exact
+            # key version that signed this token — critical for rotation overlap.
+            versioned_kid = self._keystore.active_kid(tenant_id)
             token: str = _jwt.encode(
                 payload,
                 signing_pem,
                 algorithm="EdDSA",
-                headers={"kid": tenant_id},
+                headers={"kid": versioned_kid},
             )
             return token
 
@@ -256,7 +259,10 @@ class AuthService:
             raise InvalidToken(f"token invalid: {exc}") from exc
 
         # Bind sub to kid: a token signed by one tenant's key cannot claim another.
-        if claims.get("sub") != kid:
+        # Phase 18: kid is versioned (e.g. "alpha#v2") but sub is still the tenant_id
+        # ("alpha"). Extract the tenant_id from the versioned kid for comparison.
+        kid_tenant = kid.split("#v")[0] if "#v" in kid else kid
+        if claims.get("sub") != kid_tenant:
             raise InvalidToken("token sub does not match signing tenant (kid)")
 
         jti = claims.get("jti", "")

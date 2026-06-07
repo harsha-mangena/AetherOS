@@ -65,6 +65,19 @@ from .auth import AdminSecretMismatch, AuthService, InvalidToken, RevokedToken
 from .rate_limiter import RateLimiter, RateLimitExceeded
 
 
+# ── Phase 18 request models ───────────────────────────────────────────────────
+
+class RotateKeyRequest(BaseModel):
+    overlap_ttl_seconds: int | None = Field(
+        None,
+        description=(
+            "Overlap window in seconds. During this window the old key stays verifiable "
+            "so pre-rotation tokens remain valid. Defaults to key_rotation.overlap_ttl_seconds "
+            "from config (typically equal to auth.token_ttl_seconds)."
+        ),
+    )
+
+
 class CreateRunRequest(BaseModel):
     intent: str = Field(..., description="Natural-language intent / goal.")
     submitted_by: str = Field("human:operator")
@@ -146,10 +159,12 @@ def create_app(service: RunService | None = None, auth_service: "AuthService | N
         cfg = load_config()
         auth_svc = AuthService(cfg.auth)
         rl_cfg = cfg.rate_limit
+        kr_cfg = cfg.key_rotation
     else:
         auth_svc = auth_service
         cfg = load_config()
         rl_cfg = cfg.rate_limit
+        kr_cfg = cfg.key_rotation
     app.state.auth_service = auth_svc
 
     # Phase 17: per-tenant, per-route sliding-window rate limiter.
@@ -229,8 +244,110 @@ def create_app(service: RunService | None = None, auth_service: "AuthService | N
         selects the right key by matching a token's ``kid`` header to a JWK ``kid``.
         Under HS256 (the default) there are no asymmetric keys, so this returns an
         empty key set. Always unprotected: public keys are meant to be public.
+
+        Phase 18: during a rotation overlap window, both ACTIVE and RETIRING keys
+        appear in the JWKS so tokens issued before and after the rotation validate
+        simultaneously.
         """
         return auth_svc.jwks()
+
+    # ── key rotation endpoints (Phase 18) ─────────────────────────────────────
+
+    @app.post("/auth/keys/{tenant_id}/rotate")
+    def rotate_key(tenant_id: str, req: RotateKeyRequest) -> dict[str, Any]:
+        """Rotate the Ed25519 signing key for a tenant (EdDSA only, Phase 18).
+
+        Atomically generates a new Ed25519 keypair, moves the current ACTIVE key to
+        RETIRING (verifiable but no longer signing), and stamps the new versioned kid
+        on all subsequent tokens for this tenant.
+
+        Returns the new ``kid``, the old (retiring) ``kid``, and the overlap window
+        duration so the caller can audit the rotation event.
+
+        HTTP 400 if auth.algorithm is not EdDSA (key rotation is meaningless for HS256).
+        HTTP 403 if key_rotation.enabled = False in config.
+        """
+        if not kr_cfg.enabled:
+            raise HTTPException(
+                status_code=403,
+                detail="key rotation is disabled; set key_rotation.enabled = true in config",
+            )
+        if auth_svc.algorithm != "EdDSA":
+            raise HTTPException(
+                status_code=400,
+                detail="key rotation is only supported for EdDSA; auth.algorithm is HS256",
+            )
+        ks = auth_svc.keystore
+        if ks is None:
+            raise HTTPException(status_code=500, detail="keystore not initialised")
+        overlap = req.overlap_ttl_seconds if req.overlap_ttl_seconds is not None else kr_cfg.overlap_ttl_seconds
+        # Capture the old kid before rotation.
+        old_kid = ks.active_kid(tenant_id)
+        new_kid = ks.rotate(tenant_id, overlap_ttl_seconds=overlap)
+        return {
+            "tenant_id": tenant_id,
+            "new_kid": new_kid,
+            "retiring_kid": old_kid,
+            "overlap_ttl_seconds": overlap,
+        }
+
+    @app.get("/auth/keys/{tenant_id}")
+    def get_key_info(tenant_id: str) -> dict[str, Any]:
+        """Return the key registry state for a tenant (EdDSA only, Phase 18).
+
+        Lists all key versions (ACTIVE, RETIRING, EXPIRED) with their lifecycle
+        timestamps. Suitable for ops inspection and rotation audit trails.
+
+        HTTP 400 if auth.algorithm is not EdDSA.
+        HTTP 403 if key_rotation.enabled = False in config.
+        """
+        if not kr_cfg.enabled:
+            raise HTTPException(
+                status_code=403,
+                detail="key rotation is disabled; set key_rotation.enabled = true in config",
+            )
+        if auth_svc.algorithm != "EdDSA":
+            raise HTTPException(
+                status_code=400,
+                detail="key info is only available for EdDSA",
+            )
+        ks = auth_svc.keystore
+        if ks is None:
+            raise HTTPException(status_code=500, detail="keystore not initialised")
+        return ks.key_info(tenant_id)
+
+    @app.delete("/auth/keys/{tenant_id}/retire")
+    def emergency_retire_keys(tenant_id: str) -> dict[str, Any]:
+        """Emergency: immediately expire all RETIRING keys for a tenant (Phase 18).
+
+        This is a break-glass operation that invalidates all currently-retiring keys
+        without waiting for the overlap window to expire. Tokens signed with the
+        retired keys will be rejected immediately. The current ACTIVE key is unaffected.
+
+        Use this when a key compromise is detected and immediate invalidation of all
+        pre-rotation tokens is required.
+
+        HTTP 400 if auth.algorithm is not EdDSA.
+        HTTP 403 if key_rotation.enabled = False in config.
+        """
+        if not kr_cfg.enabled:
+            raise HTTPException(
+                status_code=403,
+                detail="key rotation is disabled; set key_rotation.enabled = true in config",
+            )
+        if auth_svc.algorithm != "EdDSA":
+            raise HTTPException(
+                status_code=400,
+                detail="emergency retire is only supported for EdDSA",
+            )
+        ks = auth_svc.keystore
+        if ks is None:
+            raise HTTPException(status_code=500, detail="keystore not initialised")
+        count = ks.retire_all(tenant_id)
+        return {
+            "tenant_id": tenant_id,
+            "keys_expired": count,
+        }
 
     @app.get("/health")
     def health() -> dict[str, Any]:

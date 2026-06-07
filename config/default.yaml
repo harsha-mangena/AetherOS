@@ -183,6 +183,20 @@ auth:
   # Empty = plaintext PEM (default). Set AETHER__AUTH__KEYSTORE_PASSPHRASE in production.
   keystore_passphrase: ""
 
+# ── Key Rotation (Phase 18) ────────────────────────────────────────────────
+# Cryptoperiod management for per-tenant Ed25519 signing keys.
+# Implements NIST SP 800-57 Part 1 Rev 5 §5.3 / §5.3.5: ACTIVE → RETIRING → EXPIRED.
+# When enabled = false (default) no rotation endpoints are exposed and behavior is
+# identical to Phase 14/15/16. Set enabled: true before any long-lived deployment.
+key_rotation:
+  # Master switch. false = no rotation endpoints (backward-compatible default).
+  enabled: false
+  # Overlap window in seconds: how long a RETIRING key remains verifiable after rotation.
+  # Must be >= auth.token_ttl_seconds so no valid pre-rotation token is rejected
+  # mid-flight. Default: 3600 s (1 hour), matching the default token TTL.
+  # In production, set to your token_ttl_seconds value (or slightly above it).
+  overlap_ttl_seconds: 3600
+
 sandbox:
   # Execution backend for governed tool calls. "local" = in-process sandbox with a
   # timeout guard + egress control + provenance. A native/E2B backend drops in here.

@@ -208,6 +208,32 @@ class SandboxConfig(BaseModel):
     gateway: GatewayConfigModel = Field(default_factory=GatewayConfigModel)
 
 
+class KeyRotationConfig(BaseModel):
+    """Key rotation configuration (Phase 18).
+
+    Controls the cryptoperiod management lifecycle for per-tenant Ed25519 signing
+    keys. When ``enabled = False`` (the default) no rotation endpoints are exposed
+    and behavior is identical to Phase 14/15/16. When ``enabled = True`` the
+    POST /auth/keys/{tenant_id}/rotate endpoint is available to operators.
+
+    Algorithm: ACTIVE → RETIRING → EXPIRED state machine (NIST SP 800-57 Part 1
+    Rev 5 §5.3 / §5.3.5). An ACTIVE key signs new tokens. On rotation it moves to
+    RETIRING — it still verifies tokens issued before the rotation, but never signs
+    again. After ``overlap_ttl_seconds`` passes (enough time for all pre-rotation
+    tokens to expire naturally), the key moves to EXPIRED and is omitted from the
+    JWKS so downstream verifiers no longer accept tokens signed with it.
+
+    Zero-hardcoding: override via AETHER__KEY_ROTATION__* env vars.
+    """
+
+    # Master switch. False = no rotation endpoints (backward-compatible default).
+    enabled: bool = False
+    # Overlap window: how long a RETIRING key remains verifiable after rotation.
+    # Should be >= auth.token_ttl_seconds so no valid token is rejected mid-flight.
+    # Default: 3600 s (1 hour), matching the default token TTL.
+    overlap_ttl_seconds: int = 3600
+
+
 class RateLimitConfig(BaseModel):
     """Per-route rate limiting configuration (Phase 17).
 
@@ -264,6 +290,7 @@ class AetherConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+    key_rotation: KeyRotationConfig = Field(default_factory=KeyRotationConfig)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
 
 
