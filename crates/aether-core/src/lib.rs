@@ -33,7 +33,7 @@ pub mod lease;
 pub use error::{CoreError, Result};
 pub use evidence::{EvidenceEntry, EvidenceLedger, GENESIS_HASH};
 pub use identity::{AgentDescriptor, AgentIdentity};
-pub use lease::{Budget, CapabilityLease, LeaseBody};
+pub use lease::{Budget, BudgetLimit, CapabilityLease, LeaseBody};
 
 /// The semantic version of the core crate, surfaced for diagnostics and the UI.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

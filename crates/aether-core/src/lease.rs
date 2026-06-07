@@ -8,12 +8,16 @@
 //!
 //! Atom of thoughts:
 //!   CapabilityLease = lease_id + subject_agent_id + issuer_agent_id
-//!                   + scopes (set) + budget slice + issued_at + expires_at
-//!                   + revoked flag + Ed25519 signature(issuer) over canonical body
+//!                   + scopes (set) + budget limit + issued_at + expires_at
+//!                   + Ed25519 signature(issuer) over canonical body
+//!                   + runtime state (spent_minor, revoked)  [NOT signed]
 //!
-//! The signature binds every field of the lease *body* (everything except the
-//! signature itself), so any tampering — widening scopes, raising the budget,
-//! extending expiry — invalidates the lease.
+//! Design note (revalidation): the *budget limit* (currency + limit) is part of the
+//! signed body — raising it must invalidate the lease. The *amount spent*, however,
+//! is mutable runtime accounting maintained by the holder of the lease as it executes
+//! governed actions; it is deliberately excluded from the signature, exactly like the
+//! revocation flag. Conflating the two (signing `spent_minor`) would make the
+//! signature fail to verify the instant any budget is consumed.
 
 use serde::{Deserialize, Serialize};
 
@@ -21,38 +25,29 @@ use crate::canonical::to_canonical_bytes;
 use crate::error::{CoreError, Result};
 use crate::identity::{verify_signature, AgentIdentity};
 
-/// A monetary budget slice attached to a lease, in integer minor currency units
+/// The signed budget limit attached to a lease, in integer minor currency units
 /// (e.g. cents) to avoid floating-point drift in financial enforcement.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Budget {
+pub struct BudgetLimit {
     /// ISO 4217 currency code, e.g. "USD".
     pub currency: String,
     /// Hard spending limit in minor units (cents).
     pub limit_minor: u64,
-    /// Amount already spent against this lease, in minor units.
-    pub spent_minor: u64,
 }
 
-impl Budget {
-    /// Create a fresh budget with zero spent.
+impl BudgetLimit {
+    /// Create a new budget limit.
     pub fn new(currency: impl Into<String>, limit_minor: u64) -> Self {
         Self {
             currency: currency.into(),
             limit_minor,
-            spent_minor: 0,
         }
     }
-
-    /// Remaining spendable amount in minor units.
-    pub fn remaining_minor(&self) -> u64 {
-        self.limit_minor.saturating_sub(self.spent_minor)
-    }
-
-    /// Whether a charge of `amount_minor` would fit within the remaining budget.
-    pub fn can_afford(&self, amount_minor: u64) -> bool {
-        amount_minor <= self.remaining_minor()
-    }
 }
+
+/// Convenience constructor name retained for ergonomics: `Budget::new` builds a
+/// [`BudgetLimit`]. (The runtime "spent" figure lives on the lease, not here.)
+pub type Budget = BudgetLimit;
 
 /// The signed body of a capability lease (everything covered by the signature).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -65,8 +60,8 @@ pub struct LeaseBody {
     pub issuer_agent_id: String,
     /// Granted scopes, e.g. "tool:slack.post", "s3:read:incident-logs".
     pub scopes: Vec<String>,
-    /// Budget slice for this lease.
-    pub budget: Budget,
+    /// Signed budget limit for this lease.
+    pub budget: BudgetLimit,
     /// RFC3339 issuance timestamp.
     pub issued_at: String,
     /// RFC3339 expiry timestamp.
@@ -75,10 +70,9 @@ pub struct LeaseBody {
 
 /// A complete capability lease: a signed body plus mutable runtime state.
 ///
-/// The `signature` and `issuer_public_key` cover only [`LeaseBody`]. The `revoked`
-/// flag is runtime state managed by the control plane and is intentionally *not*
-/// part of the signed body — revocation is enforced by the holder of the ledger,
-/// not by the signature.
+/// The `signature` and `issuer_public_key` cover only [`LeaseBody`]. The `spent_minor`
+/// and `revoked` fields are runtime state maintained by the lease holder and are
+/// intentionally *not* part of the signed body.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CapabilityLease {
     /// The signed lease body.
@@ -87,18 +81,21 @@ pub struct CapabilityLease {
     pub issuer_public_key: String,
     /// Ed25519 signature (hex) over the canonical bytes of `body`.
     pub signature: String,
+    /// Amount spent against the budget, in minor units (runtime state, not signed).
+    #[serde(default)]
+    pub spent_minor: u64,
     /// Runtime revocation flag (not signed).
+    #[serde(default)]
     pub revoked: bool,
 }
 
 impl CapabilityLease {
     /// Issue and sign a new lease using the issuer identity's signing key.
-    #[allow(clippy::too_many_arguments)]
     pub fn issue(
         issuer: &AgentIdentity,
         subject_agent_id: impl Into<String>,
         scopes: Vec<String>,
-        budget: Budget,
+        budget: BudgetLimit,
         issued_at: impl Into<String>,
         expires_at: impl Into<String>,
     ) -> Result<Self> {
@@ -120,6 +117,7 @@ impl CapabilityLease {
             body,
             issuer_public_key: issuer.public_key_hex(),
             signature,
+            spent_minor: 0,
             revoked: false,
         })
     }
@@ -133,6 +131,19 @@ impl CapabilityLease {
     /// Mark the lease as revoked (runtime state).
     pub fn revoke(&mut self) {
         self.revoked = true;
+    }
+
+    /// Remaining spendable amount in minor units.
+    pub fn remaining_minor(&self) -> u64 {
+        self.body
+            .budget
+            .limit_minor
+            .saturating_sub(self.spent_minor)
+    }
+
+    /// Whether a charge of `amount_minor` fits within the remaining budget.
+    pub fn can_afford(&self, amount_minor: u64) -> bool {
+        amount_minor <= self.remaining_minor()
     }
 
     /// Whether the lease is expired relative to `now` (RFC3339 strings compared
@@ -167,11 +178,11 @@ impl CapabilityLease {
                 scope: scope.to_string(),
             });
         }
-        if !self.body.budget.can_afford(cost_minor) {
+        if !self.can_afford(cost_minor) {
             return Err(CoreError::InvalidInput(format!(
                 "budget exceeded: requested {} minor, {} remaining",
                 cost_minor,
-                self.body.budget.remaining_minor()
+                self.remaining_minor()
             )));
         }
         Ok(())
@@ -180,14 +191,15 @@ impl CapabilityLease {
     /// Record a successful spend of `amount_minor` against the lease budget.
     ///
     /// This mutates runtime budget state; it must be preceded by a successful
-    /// [`CapabilityLease::authorize`] for the same amount.
+    /// [`CapabilityLease::authorize`] for the same amount. The signature still
+    /// verifies after a spend, because spend is not part of the signed body.
     pub fn record_spend(&mut self, amount_minor: u64) -> Result<()> {
-        if !self.body.budget.can_afford(amount_minor) {
+        if !self.can_afford(amount_minor) {
             return Err(CoreError::InvalidInput(
                 "spend would exceed remaining budget".into(),
             ));
         }
-        self.body.budget.spent_minor = self.body.budget.spent_minor.saturating_add(amount_minor);
+        self.spent_minor = self.spent_minor.saturating_add(amount_minor);
         Ok(())
     }
 }
@@ -206,7 +218,7 @@ mod tests {
             iss,
             "subject-agent",
             vec!["tool:slack.post".into(), "s3:read:logs".into()],
-            Budget::new("USD", 10_000),
+            BudgetLimit::new("USD", 10_000),
             "2026-06-07T00:00:00Z",
             "2026-06-08T00:00:00Z",
         )
@@ -221,6 +233,18 @@ mod tests {
     }
 
     #[test]
+    fn signature_still_verifies_after_spend() {
+        let iss = issuer();
+        let mut lease = sample_lease(&iss);
+        lease.record_spend(2_500).unwrap();
+        // Spending must NOT break the signature (spent_minor is not signed).
+        assert!(lease.verify_signature().is_ok());
+        assert!(lease
+            .authorize("tool:slack.post", 100, "2026-06-07T12:00:00Z")
+            .is_ok());
+    }
+
+    #[test]
     fn tampering_with_scopes_breaks_signature() {
         let iss = issuer();
         let mut lease = sample_lease(&iss);
@@ -229,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn tampering_with_budget_breaks_signature() {
+    fn tampering_with_budget_limit_breaks_signature() {
         let iss = issuer();
         let mut lease = sample_lease(&iss);
         lease.body.budget.limit_minor = 1_000_000;
@@ -252,7 +276,7 @@ mod tests {
         let err = lease
             .authorize("admin:delete", 0, "2026-06-07T12:00:00Z")
             .unwrap_err();
-        matches!(err, CoreError::ScopeNotGranted { .. });
+        assert!(matches!(err, CoreError::ScopeNotGranted { .. }));
     }
 
     #[test]
@@ -289,8 +313,19 @@ mod tests {
         let mut lease = sample_lease(&iss);
         lease.record_spend(3_000).unwrap();
         lease.record_spend(2_000).unwrap();
-        assert_eq!(lease.body.budget.spent_minor, 5_000);
-        assert_eq!(lease.body.budget.remaining_minor(), 5_000);
+        assert_eq!(lease.spent_minor, 5_000);
+        assert_eq!(lease.remaining_minor(), 5_000);
         assert!(lease.record_spend(6_000).is_err());
+    }
+
+    #[test]
+    fn json_roundtrip_preserves_runtime_state() {
+        let iss = issuer();
+        let mut lease = sample_lease(&iss);
+        lease.record_spend(1_234).unwrap();
+        let json = serde_json::to_string(&lease).unwrap();
+        let restored: CapabilityLease = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.spent_minor, 1_234);
+        assert!(restored.verify_signature().is_ok());
     }
 }

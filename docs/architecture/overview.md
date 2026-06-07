@@ -77,12 +77,48 @@ All tunable behavior lives in `config/default.yaml`, validated by Pydantic, and
 overridable via `AETHER__SECTION__KEY` environment variables. Code reads typed config
 objects; there are no magic constants embedded in logic.
 
+## Orchestration (Phase 2)
+
+The orchestration layer compiles natural-language intent into a governed, auditable
+plan and executes it under the Rust core.
+
+- Intent compiler runs a pluggable planner and produces a validated `ExecutionPlan`.
+  Config-driven high-impact scope patterns are authoritative over the planner: a step
+  touching a write/restart/deploy scope is forced high-impact even if the planner
+  disagrees. An `intent.submitted` evidence event anchors the run.
+- Planners are decoupled from any model: `RuleBasedPlanner` (deterministic, offline,
+  drives the incident demo and all tests) and `LLMPlanner` (wraps an injectable
+  completion callable, strictly validates JSON structured output before any step
+  executes). The governed-execution core never depends on an LLM or network.
+- Governance bridge (`GovernanceContext`) is the PyO3 seam: it issues a
+  least-privilege lease scoped to exactly the plan's scopes, and every step passes
+  through the Rust lease's `authorize` (signature + revocation + expiry + scope +
+  budget) and, on success, charges the Rust-tracked budget and appends evidence.
+  Python makes no authorization decision itself.
+- Execution: a framework-agnostic `GovernedEngine` defines the canonical
+  governed-execution semantics (approval gate, authorize, execute, charge, record).
+  A LangGraph `StateGraph` wraps the same primitives, adding durable checkpointing
+  and `interrupt`-based human-in-the-loop approval for high-impact steps. Keeping the
+  engine framework-free is deliberate — the moat must not depend on a third-party
+  runtime.
+
+### Revalidation: signed budget limit vs runtime spend
+
+A bug surfaced in Phase 2 testing: the original lease signed the entire budget
+including `spent_minor`, so the signature failed to verify the instant any budget was
+consumed. Fixed by splitting a signed `BudgetLimit` (currency + limit) inside the
+lease body from runtime `spent_minor`/`revoked` state on the lease itself. The issuer
+signs the limit; the holder tracks spend. A regression test
+(`signature_still_verifies_after_spend`) locks this in.
+
 ## Phased plan
 
 1. **Foundations (Weeks 1–2, done):** Rust core, PyO3 bindings, Pydantic models,
    config, ephemeral memory, roundtrip + integration tests.
-2. **Orchestration (Weeks 3–4):** LangGraph StateGraph calling the Rust core, intent
-   compiler, human approval checkpoints, evidence emission at every node.
+2. **Orchestration (Weeks 3–4, done):** intent compiler + pluggable planners, the
+   governance bridge to the Rust core, a framework-agnostic governed execution
+   engine, and a LangGraph StateGraph with human-in-the-loop approval checkpoints
+   and per-node evidence emission.
 3. **Governance & Memory (Weeks 5–6):** hybrid policy engine (critical parts in
    Rust), budget tracking, earned-autonomy tiers, durable memory.
 4. **MCP + Sandbox (Week 7):** MCP client and adapters in Python, all tool calls

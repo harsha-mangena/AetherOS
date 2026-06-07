@@ -159,12 +159,12 @@ impl PyCapabilityLease {
 
     #[getter]
     fn remaining_minor(&self) -> u64 {
-        self.inner.body.budget.remaining_minor()
+        self.inner.remaining_minor()
     }
 
     #[getter]
     fn spent_minor(&self) -> u64 {
-        self.inner.body.budget.spent_minor
+        self.inner.spent_minor
     }
 
     #[getter]
