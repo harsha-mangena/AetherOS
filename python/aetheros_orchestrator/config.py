@@ -208,6 +208,23 @@ class SandboxConfig(BaseModel):
     gateway: GatewayConfigModel = Field(default_factory=GatewayConfigModel)
 
 
+class PrometheusConfig(BaseModel):
+    """Prometheus metrics exposition configuration (Phase 22).
+
+    When enabled = True, GET /metrics exposes all OTEL instruments as
+    Prometheus text format (OpenMetrics v1.0.0). The PrometheusMetricReader
+    bridges the opentelemetry-sdk MeterProvider to prometheus_client.
+
+    When enabled = False (default), /metrics returns HTTP 404.
+    Zero-hardcoding: override via AETHER__PROMETHEUS__* env vars.
+    """
+
+    enabled: bool = False
+    # Optional metric name prefix for all instruments (e.g. "aetheros_").
+    # Empty string = no prefix, instruments use their natural names.
+    prefix: str = ""
+
+
 class HealthConfig(BaseModel):
     """Health endpoint configuration (Phase 21).
 
@@ -355,6 +372,7 @@ class AetherConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+    prometheus: PrometheusConfig = Field(default_factory=PrometheusConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     tracing: TracingConfig = Field(default_factory=TracingConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)

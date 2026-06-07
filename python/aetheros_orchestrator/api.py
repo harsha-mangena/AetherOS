@@ -33,6 +33,14 @@ Endpoints:
     POST /marketplace/skills/{skill_id}/install  install a skill under governance for a tenant
     GET  /marketplace/installed           list skills installed for the requesting tenant
 
+Phase 22: Prometheus metrics bridge + admin introspection API:
+    GET  /metrics                         Prometheus text-format scrape (OpenMetrics v1.0.0)
+                                          Returns 404 when prometheus.enabled = False (default).
+    GET  /admin/runs                      tenant run list with lightweight summary fields
+    GET  /admin/tenants/{id}/budget       budget summary for a tenant (cross-tenant: 403)
+    GET  /admin/policy/deny-rate          policy denial statistics for the tenant
+    GET  /admin/summary                   service-level summary (all tenants, admin overview)
+
 Rate limiting (Phase 17):
     When rate_limit.enabled = True in config, per-tenant, per-route sliding-window
     counters enforce configurable request limits. Breached limits return HTTP 429
@@ -56,6 +64,8 @@ except Exception as exc:  # pragma: no cover - import guard
 from .config import load_config, AuditConfig
 from .run_service import RunService
 from .health import make_health_router
+from .metrics_exporter import make_metrics_router
+from .admin import make_admin_router
 from .tenancy import (
     DEFAULT_TENANT_ID,
     CrossTenantAccess,
@@ -203,6 +213,12 @@ def create_app(
     # the X-Tenant-Id header. When auth is enabled it validates the Bearer JWT and derives
     # tenant_id from the sub claim — the header is irrelevant and cannot be forged.
     get_tenant = auth_svc.tenant_id_dependency()
+
+    # Phase 22: Prometheus metrics bridge and admin introspection API.
+    # /metrics — Prometheus text-format scrape endpoint (OpenMetrics v1.0.0).
+    # /admin/*  — read-only ops introspection (runs, budget, deny-rate, summary).
+    app.include_router(make_metrics_router(cfg))
+    app.include_router(make_admin_router(svc, get_tenant))
 
     # ── auth endpoints (Phase 12, always unprotected) ─────────────────────────
 

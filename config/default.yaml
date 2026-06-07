@@ -283,3 +283,14 @@ health:
   enabled: true
   # Whether /health/deep performs ledger chain integrity verification.
   deep_checks: true
+
+# ── Prometheus metrics (Phase 22) ─────────────────────────────────────────────
+# OpenMetrics v1.0.0 exposition via prometheus_client + PrometheusMetricReader.
+# GET /metrics serves all aetheros.* OTEL instruments as Prometheus text format.
+# When enabled = false (default), /metrics returns HTTP 404 and behavior is
+# identical to all prior phases.
+prometheus:
+  # Master switch. false = no /metrics endpoint (backward-compatible default).
+  enabled: false
+  # Optional prefix for all metric names (e.g. "aetheros_"). Empty = no prefix.
+  prefix: ""
