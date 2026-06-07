@@ -88,6 +88,20 @@ class AutonomyConfig(BaseModel):
     max_tier: int = 3
 
 
+class TransparencyConfig(BaseModel):
+    """Witness-cosigning panel for split-view (equivocation) defense.
+
+    A panel of ``witness_count`` independent witnesses cosigns each Signed Tree Head.
+    A cosigned head is publicly trustworthy once at least ``witness_threshold``
+    distinct witnesses endorse it. ``witness_threshold = 0`` selects a strict
+    majority at runtime (the smallest panel no single equivocation fools).
+    """
+
+    witness_count: int = 3
+    # 0 → strict majority (n // 2 + 1) computed from witness_count at construction.
+    witness_threshold: int = 0
+
+
 class GatewayConfigModel(BaseModel):
     allow_destinations: list[str] = Field(default_factory=list)
     external_tools: list[str] = Field(default_factory=list)
@@ -114,6 +128,7 @@ class AetherConfig(BaseModel):
     policy: PolicyConfig = Field(default_factory=PolicyConfig)
     constitution: ConstitutionConfig = Field(default_factory=ConstitutionConfig)
     autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
+    transparency: TransparencyConfig = Field(default_factory=TransparencyConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
 
 

@@ -20,6 +20,7 @@ Endpoints:
     GET  /runs/{run_id}/evidence          verify + replay the tamper-evident ledger
     GET  /runs/{run_id}/transparency      signed tree head (+ ?leaf=N inclusion proof)
     GET  /runs/{run_id}/transparency/consistency  append-only proof (?first_size=M)
+    GET  /runs/{run_id}/transparency/cosigned     STH + independent witness cosignatures
 """
 
 from __future__ import annotations
@@ -182,6 +183,24 @@ def create_app(service: RunService | None = None) -> "FastAPI":
         """Append-only consistency proof from ?first_size=M to the current ledger size."""
         try:
             return svc.transparency_consistency(run_id, first_size, x_tenant_id)
+        except (KeyError, CrossTenantAccess):
+            raise HTTPException(status_code=404, detail="unknown run")
+        except IndexError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/runs/{run_id}/transparency/cosigned")
+    def transparency_cosigned(
+        run_id: str,
+        x_tenant_id: str = Header(DEFAULT_TENANT_ID),
+    ) -> dict[str, Any]:
+        """Signed tree head plus independent witness cosignatures (split-view defense).
+
+        Returns the STH, the gathered witness cosignatures, the panel size/threshold,
+        and a `trustworthy` flag that is true once `threshold` distinct witnesses have
+        cosigned the head along a consistent, append-only history.
+        """
+        try:
+            return svc.transparency_cosigned(run_id, x_tenant_id)
         except (KeyError, CrossTenantAccess):
             raise HTTPException(status_code=404, detail="unknown run")
         except IndexError as exc:

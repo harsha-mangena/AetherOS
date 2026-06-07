@@ -150,6 +150,33 @@ class RunService:
         # so single-tenant callers (and the existing tests/demo) work unchanged.
         self._tenants = registry or TenantRegistry()
         self._tenants.ensure(DEFAULT_TENANT_ID, "Default Workspace")
+        # Witness panel (Phase 9b/9c): a persistent set of independent witnesses that
+        # cosign this control plane's signed tree heads, defeating split-view attacks.
+        # Built once and reused across calls so each witness retains the last root it
+        # endorsed per log (run) — which is what makes the consistency check meaningful.
+        self._witness_registry = self._build_witness_registry()
+
+    def _build_witness_registry(self):
+        """Construct the config-driven witness panel (lazy import; zero-hardcoding)."""
+        import aetheros
+        from .witness import Witness, WitnessRegistry
+
+        tcfg = self._config.transparency
+        count = max(1, tcfg.witness_count)
+        witnesses = [
+            Witness(aetheros.AgentIdentity.generate(f"witness-{i}"))
+            for i in range(count)
+        ]
+        threshold = tcfg.witness_threshold if tcfg.witness_threshold > 0 else None
+        return WitnessRegistry(witnesses, threshold=threshold)
+
+    @property
+    def witness_panel_size(self) -> int:
+        return self._witness_registry.size
+
+    @property
+    def witness_threshold(self) -> int:
+        return self._witness_registry.threshold
 
     # ── tenancy ──────────────────────────────────────────────────────────────
 
@@ -464,6 +491,64 @@ class RunService:
             "consistency_proof": log.consistency_proof(first_size),
             "signed_tree_head": sth.to_dict(),
         }
+
+    def transparency_cosigned(
+        self,
+        run_id: str,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Signed Tree Head plus independent witness cosignatures (Phase 9c).
+
+        Gossips the current STH to the persistent witness panel. Each witness retains
+        the last root it endorsed for *this run's log* and only cosigns a new head it
+        can prove grew append-only from the root it itself holds — so a control plane
+        that tried to show two divergent histories for the same run would have at least
+        one honest witness refuse, exposing the fork. The head is publicly trustworthy
+        once ``threshold`` distinct witnesses cosign it.
+
+        Calling this repeatedly as the ledger grows exercises the real consistency path:
+        the second call must carry a consistency proof from the witness's retained root,
+        which the witness verifies before advancing.
+        """
+        from .transparency import TransparencyLog
+
+        run = self.get(run_id, tenant_id)
+        ledger = run.ctx.ledger
+        log = TransparencyLog.from_ledger(ledger)
+        now = datetime.now(timezone.utc).isoformat()
+        sth = log.signed_tree_head(run.ctx.control_plane, now)
+
+        # If any witness has already endorsed an earlier head for this run, supply a
+        # consistency proof from that retained size to now so honest growth is cosignable.
+        proof: dict[str, Any] | None = None
+        retained = self._min_retained_size(run_id)
+        if retained is not None and retained < log.size:
+            proof = log.consistency_proof(retained)
+
+        cosigned = self._witness_registry.cosign(run_id, sth, consistency_proof=proof)
+        return {
+            "run_id": run_id,
+            "ledger_verified": ledger.verify(),
+            "signed_tree_head": sth.to_dict(),
+            "cosignatures": [c.to_dict() for c in cosigned.cosignatures],
+            "witness_count": self._witness_registry.size,
+            "threshold": self._witness_registry.threshold,
+            "trustworthy": self._witness_registry.is_trustworthy(cosigned),
+        }
+
+    def _min_retained_size(self, log_id: str) -> int | None:
+        """The smallest tree size any panel witness has retained for ``log_id``.
+
+        A consistency proof from this size satisfies every witness that has advanced at
+        least this far; witnesses on their first sighting need no proof and cosign anyway.
+        Returns None if no witness has yet endorsed a head for the log.
+        """
+        sizes = [
+            seen[0]
+            for w in self._witness_registry._witnesses  # noqa: SLF001 — same package
+            if (seen := w.last_seen(log_id)) is not None
+        ]
+        return min(sizes) if sizes else None
 
     def compliance(self, tenant_id: str | None = None) -> dict[str, Any]:
         """Tenant-wide SOC2/GDPR compliance rollup, projected from the run ledgers.

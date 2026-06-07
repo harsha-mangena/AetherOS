@@ -94,6 +94,17 @@ autonomy:
   # Maximum autonomy tier an agent can reach.
   max_tier: 3
 
+transparency:
+  # Witness-cosigning panel defending against split-view (equivocation) attacks on
+  # the transparency log. Each independent witness retains the last tree head it
+  # endorsed for a log and only cosigns a new head it can prove grew append-only
+  # from the root it itself holds. A cosigned head is publicly trustworthy once at
+  # least `witness_threshold` distinct witnesses endorse it.
+  witness_count: 3
+  # 0 selects a strict majority (n // 2 + 1) — the smallest panel that no single
+  # equivocating witness can fool. Set explicitly to raise the bar.
+  witness_threshold: 0
+
 constitution:
   # The supreme governance layer. Articles are evaluated in the Rust core *before*
   # policy. A "forbid" is absolute — no policy allow and no autonomy tier overrides it.
