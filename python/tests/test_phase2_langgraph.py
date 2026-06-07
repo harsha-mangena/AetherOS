@@ -35,6 +35,11 @@ def _setup():
     plan = IntentCompiler(cfg).compile(intent, ledger)
     scopes = [s.scope for s in plan.steps]
     ctx = GovernanceContext.for_run(cfg, intent, scopes, ledger=ledger)
+    # Phase 3: infra mutations require earned autonomy. Model an agent with a track
+    # record so the incident plan's restart step is policy-permitted (still gated by
+    # human approval).
+    for _ in range(5):
+        ctx.autonomy.record_success(ctx.agent.agent_id)
     return cfg, intent, ledger, plan, ctx
 
 

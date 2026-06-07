@@ -44,3 +44,52 @@ orchestration:
   max_plan_steps: 25
   # Default model used for intent compilation (resolved by the runtime/env).
   default_model: "configured-by-runtime"
+
+policy:
+  # When no rule matches, deny by default (safe-by-default). Set true only for
+  # permissive/dev environments.
+  default_allow: false
+  # High-impact actions require human approval even when policy allows them.
+  require_approval_for_high_impact: true
+  # Ordered rules; deny always overrides allow regardless of priority.
+  rules:
+    # Read-only data access is broadly permitted for any agent.
+    - id: "allow-reads"
+      effect: "allow"
+      scope: "*:read:*"
+      priority: 10
+    # Observability/search tooling is permitted for any agent.
+    - id: "allow-observability"
+      effect: "allow"
+      scope: "tool:*"
+      priority: 5
+    # Local analysis/compute (no external side effects) is permitted for any agent.
+    - id: "allow-analysis"
+      effect: "allow"
+      scope: "analysis:*"
+      priority: 5
+    # Governed organizational memory access (reads and writes) is permitted; the
+    # durable store separately enforces that the acting lease grants the record's
+    # sensitivity scope (least privilege), so this rule only gates the action class.
+    - id: "allow-memory"
+      effect: "allow"
+      scope: "memory:*"
+      priority: 5
+    # Infra mutations (restart/deploy) are allowed but only for agents that have
+    # earned autonomy tier >= 1, and always gated by approval (high-impact).
+    - id: "allow-infra-mutations-earned"
+      effect: "allow"
+      scope: "infra:*"
+      min_autonomy_tier: 1
+      priority: 20
+    # Destructive deletes against production are never auto-permitted.
+    - id: "deny-prod-delete"
+      effect: "deny"
+      scope: "*:delete:prod*"
+      priority: 100
+
+autonomy:
+  # Consecutive successful governed runs needed to earn the next tier.
+  promotion_threshold: 5
+  # Maximum autonomy tier an agent can reach.
+  max_tier: 3

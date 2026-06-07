@@ -62,8 +62,13 @@ def main() -> int:
 
     scopes = [s.scope for s in plan.steps]
     ctx = GovernanceContext.for_run(config, intent, scopes, ledger=ledger)
+    # Phase 3: restarting production infra requires earned autonomy. Model an agent
+    # that has already built a track record of successful governed runs (tier >= 1).
+    for _ in range(config.autonomy.promotion_threshold):
+        ctx.autonomy.record_success(ctx.agent.agent_id)
     print(f"\nIssued lease {ctx.lease.lease_id} to agent {ctx.agent.agent_id[:8]}…")
-    print(f"  scopes: {len(ctx.lease.scopes)}  budget: {intent.budget_minor} minor\n")
+    print(f"  scopes: {len(ctx.lease.scopes)}  budget: {intent.budget_minor} minor")
+    print(f"  earned autonomy tier: {ctx.autonomy_tier}\n")
 
     outcome = GovernedEngine(ctx, approval=approval).run(plan)
 

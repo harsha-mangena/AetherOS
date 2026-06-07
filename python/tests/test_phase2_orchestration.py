@@ -25,6 +25,20 @@ def _intent(text="Investigate the production incident in checkout", budget=100_0
     return Intent(text=text, submitted_by="human:vamsi", budget_minor=budget)
 
 
+def _earn_tier1(ctx, runs: int = 5):
+    """Simulate an agent that has earned autonomy tier 1 through prior governed runs.
+
+    Phase 3 gates infra mutations behind earned autonomy: a brand-new agent (tier 0)
+    cannot restart production infrastructure. These end-to-end tests model an agent
+    that has already built a track record, so we record enough successes to reach
+    tier 1 before executing the incident plan.
+    """
+    for _ in range(runs):
+        ctx.autonomy.record_success(ctx.agent.agent_id)
+    assert ctx.autonomy_tier >= 1
+    return ctx
+
+
 # ── Intent compilation ──────────────────────────────────────────────────────
 
 def test_compiler_produces_incident_plan():
@@ -117,6 +131,7 @@ def test_engine_full_incident_run_with_auto_approval():
 
     scopes = [s.scope for s in plan.steps]
     ctx = GovernanceContext.for_run(cfg, intent, scopes, ledger=ledger)
+    _earn_tier1(ctx)
     engine = GovernedEngine(ctx)
     outcome = engine.run(plan)
 
@@ -140,6 +155,7 @@ def test_engine_halts_on_human_denial():
     plan = compiler.compile(intent, ledger)
     scopes = [s.scope for s in plan.steps]
     ctx = GovernanceContext.for_run(cfg, intent, scopes, ledger=ledger)
+    _earn_tier1(ctx)
 
     engine = GovernedEngine(ctx, approval=auto_deny)
     outcome = engine.run(plan)

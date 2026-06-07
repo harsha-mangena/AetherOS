@@ -11,7 +11,9 @@ human-in-the-loop approval checkpoints and per-node evidence emission.
 
 from __future__ import annotations
 
+from .autonomy import AutonomyTracker
 from .config import AetherConfig, load_config
+from .durable_memory import DurableMemory, DurableRecord, MemoryAccessDenied
 from .engine import GovernedEngine, auto_approve, auto_deny
 from .governance import GovernanceContext, GovernanceDecision
 from .intent_compiler import IntentCompilationError, IntentCompiler
@@ -25,6 +27,7 @@ from .models import (
     StepStatus,
 )
 from .planner import LLMPlanner, Planner, RuleBasedPlanner
+from .policy import PolicyDecision, PolicyEngine
 from .tools import ToolRegistry, default_registry
 
 __all__ = [
@@ -33,6 +36,9 @@ __all__ = [
     "load_config",
     "EphemeralMemory",
     "MemoryRecord",
+    "DurableMemory",
+    "DurableRecord",
+    "MemoryAccessDenied",
     # models
     "Intent",
     "PlanStep",
@@ -54,6 +60,10 @@ __all__ = [
     "auto_deny",
     "ToolRegistry",
     "default_registry",
+    # policy / autonomy (Phase 3)
+    "PolicyEngine",
+    "PolicyDecision",
+    "AutonomyTracker",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

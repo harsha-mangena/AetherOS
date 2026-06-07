@@ -48,6 +48,27 @@ class OrchestrationConfig(BaseModel):
     default_model: str = "configured-by-runtime"
 
 
+class PolicyRuleConfig(BaseModel):
+    id: str
+    effect: str = "allow"
+    scope: str | None = None
+    tool: str | None = None
+    min_autonomy_tier: int | None = None
+    max_cost_minor: int | None = None
+    priority: int = 0
+
+
+class PolicyConfig(BaseModel):
+    default_allow: bool = False
+    require_approval_for_high_impact: bool = True
+    rules: list[PolicyRuleConfig] = Field(default_factory=list)
+
+
+class AutonomyConfig(BaseModel):
+    promotion_threshold: int = 5
+    max_tier: int = 3
+
+
 class AetherConfig(BaseModel):
     """Top-level validated configuration for AetherOS."""
 
@@ -57,6 +78,8 @@ class AetherConfig(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     evidence: EvidenceConfig = Field(default_factory=EvidenceConfig)
     orchestration: OrchestrationConfig = Field(default_factory=OrchestrationConfig)
+    policy: PolicyConfig = Field(default_factory=PolicyConfig)
+    autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
 
 
 def _default_config_path() -> Path:

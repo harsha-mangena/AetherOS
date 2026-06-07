@@ -11,6 +11,9 @@
 //! - [`evidence`]: append-only, hash-chained, replayable evidence ledger.
 //! - [`canonical`]: deterministic canonical JSON serialization + SHA-256 hashing,
 //!   the reproducible byte representation shared with the Python bindings.
+//! - [`policy`]: the integrity-critical policy evaluation core (deny-overrides).
+//! - [`autonomy`]: earned-autonomy tier tracking from a governed track record.
+//! - [`glob`]: minimal dependency-free glob matching for policy patterns.
 //! - [`error`]: the crate-wide [`error::CoreError`] type.
 //!
 //! ## Design tenets
@@ -24,16 +27,21 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod autonomy;
 pub mod canonical;
 pub mod error;
 pub mod evidence;
+pub mod glob;
 pub mod identity;
 pub mod lease;
+pub mod policy;
 
+pub use autonomy::AutonomyRecord;
 pub use error::{CoreError, Result};
 pub use evidence::{EvidenceEntry, EvidenceLedger, GENESIS_HASH};
 pub use identity::{AgentDescriptor, AgentIdentity};
 pub use lease::{Budget, BudgetLimit, CapabilityLease, LeaseBody};
+pub use policy::{Effect, PolicyDecision, PolicyRequest, PolicyRule, PolicySet};
 
 /// The semantic version of the core crate, surfaced for diagnostics and the UI.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

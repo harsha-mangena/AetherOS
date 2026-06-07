@@ -19,16 +19,26 @@ from __future__ import annotations
 from aetheros import AgentIdentity, CapabilityLease, EvidenceLedger
 from aetheros.lease import LeaseDenied
 
+from .autonomy import AutonomyTracker
 from .config import AetherConfig
 from .models import Intent, PlanStep
+from .policy import PolicyEngine
 
 
 class GovernanceDecision:
     """Outcome of an authorization check for a step."""
 
-    def __init__(self, allowed: bool, reason: str | None = None) -> None:
+    def __init__(
+        self,
+        allowed: bool,
+        reason: str | None = None,
+        requires_approval: bool = False,
+        deciding_rule_id: str | None = None,
+    ) -> None:
         self.allowed = allowed
         self.reason = reason
+        self.requires_approval = requires_approval
+        self.deciding_rule_id = deciding_rule_id
 
     def __bool__(self) -> bool:
         return self.allowed
@@ -43,12 +53,21 @@ class GovernanceContext:
         control_plane: AgentIdentity,
         agent: AgentIdentity,
         ledger: EvidenceLedger,
+        policy: PolicyEngine | None = None,
+        autonomy: AutonomyTracker | None = None,
     ) -> None:
         self._config = config
         self.control_plane = control_plane
         self.agent = agent
         self.ledger = ledger
         self.lease: CapabilityLease | None = None
+        self.policy = policy or PolicyEngine.from_config(config)
+        self.autonomy = autonomy or AutonomyTracker.from_config(config)
+
+    @property
+    def autonomy_tier(self) -> int:
+        """Current earned-autonomy tier of the executing agent."""
+        return self.autonomy.tier(self.agent.agent_id)
 
     @classmethod
     def for_run(
@@ -59,13 +78,15 @@ class GovernanceContext:
         ledger: EvidenceLedger | None = None,
         control_plane: AgentIdentity | None = None,
         agent: AgentIdentity | None = None,
+        policy: PolicyEngine | None = None,
+        autonomy: AutonomyTracker | None = None,
     ) -> "GovernanceContext":
         """Bootstrap a governance context: identities, ledger, and a signed lease
         scoped to exactly the capabilities the plan requires (least privilege)."""
         ledger = ledger or EvidenceLedger()
         control_plane = control_plane or AgentIdentity.generate("control-plane")
         agent = agent or AgentIdentity.generate("execution-agent")
-        ctx = cls(config, control_plane, agent, ledger)
+        ctx = cls(config, control_plane, agent, ledger, policy=policy, autonomy=autonomy)
         ctx.issue_lease(intent, required_scopes)
         return ctx
 
@@ -94,15 +115,62 @@ class GovernanceContext:
         return lease
 
     def requires_approval(self, step: PlanStep) -> bool:
-        """Whether a step requires a human approval gate before execution."""
-        return bool(self._config.governance.require_human_approval and step.high_impact)
+        """Whether a step requires a human approval gate before execution.
+
+        A step is gated if config marks it high-impact-by-policy OR the Rust policy
+        engine's decision for the step demands approval at the agent's current tier.
+        """
+        if self._config.governance.require_human_approval and step.high_impact:
+            return True
+        decision = self.policy.evaluate(
+            scope=step.scope,
+            tool=step.tool,
+            autonomy_tier=self.autonomy_tier,
+            cost_minor=step.estimated_cost_minor,
+            high_impact=step.high_impact,
+        )
+        return bool(decision.allowed and decision.requires_approval)
 
     def authorize_step(self, step: PlanStep) -> GovernanceDecision:
-        """Ask the Rust lease whether this step is permitted right now."""
+        """Authorize a step: the Rust policy engine AND the Rust lease must both allow.
+
+        Order: policy first (is this class of action permitted for this agent's tier?),
+        then the lease (does this specific agent hold the scope, budget, and a valid,
+        unexpired, unrevoked grant?). Either denial halts the step and records evidence,
+        and a policy denial is also counted as an autonomy violation.
+        """
         assert self.lease is not None, "lease not issued"
+
+        decision = self.policy.evaluate(
+            scope=step.scope,
+            tool=step.tool,
+            autonomy_tier=self.autonomy_tier,
+            cost_minor=step.estimated_cost_minor,
+            high_impact=step.high_impact,
+        )
+        if not decision.allowed:
+            self.autonomy.record_violation(self.agent.agent_id)
+            self.ledger.append(
+                "control-plane",
+                "policy.denied",
+                {
+                    "step_id": step.step_id,
+                    "scope": step.scope,
+                    "reason": decision.reason,
+                    "deciding_rule_id": decision.deciding_rule_id,
+                },
+            )
+            return GovernanceDecision(
+                False, decision.reason, deciding_rule_id=decision.deciding_rule_id
+            )
+
         try:
             self.lease.authorize(step.scope, step.estimated_cost_minor)
-            return GovernanceDecision(True)
+            return GovernanceDecision(
+                True,
+                requires_approval=decision.requires_approval,
+                deciding_rule_id=decision.deciding_rule_id,
+            )
         except LeaseDenied as exc:
             self.ledger.append(
                 "control-plane",
@@ -110,6 +178,18 @@ class GovernanceContext:
                 {"step_id": step.step_id, "scope": step.scope, "reason": str(exc)},
             )
             return GovernanceDecision(False, str(exc))
+
+    def record_run_success(self) -> bool:
+        """Record a fully successful run as an autonomy success. Returns True if the
+        agent was promoted to a higher autonomy tier."""
+        promoted = self.autonomy.record_success(self.agent.agent_id)
+        if promoted:
+            self.ledger.append(
+                "control-plane",
+                "autonomy.promoted",
+                {"agent": self.agent.agent_id, "tier": self.autonomy_tier},
+            )
+        return promoted
 
     def record_approval(self, step: PlanStep, approver: str, granted: bool) -> None:
         """Record a human approval decision in the ledger."""

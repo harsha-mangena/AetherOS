@@ -111,6 +111,31 @@ lease body from runtime `spent_minor`/`revoked` state on the lease itself. The i
 signs the limit; the holder tracks spend. A regression test
 (`signature_still_verifies_after_spend`) locks this in.
 
+## Governance & Hybrid Memory (Phase 3)
+
+Governance moves from advisory to enforced, and memory becomes policy-mediated.
+
+- Hybrid policy engine: the integrity-critical decision function lives in Rust
+  (`policy.rs`) — given an ordered rule set and a fully-resolved request it computes
+  allow/deny with deny-overrides and default-deny, matching scope/tool via a small
+  dependency-free glob matcher, and gating rules by minimum earned-autonomy tier and
+  cost ceilings. Rule authoring/loading from config is Python-side; the decision is
+  not. Orchestration cannot bypass it.
+- Earned autonomy: `autonomy.rs` owns each agent's tier (0..max). Consecutive
+  successful governed runs promote at a configured threshold; any violation (a policy
+  denial of an attempted action) demotes a tier and resets the streak. Tiers gate
+  which actions policy will permit — a fresh agent cannot restart production infra
+  until it has earned trust.
+- Step authorization now requires BOTH the Rust policy engine AND the Rust lease to
+  allow. Policy runs first (is this action class permitted for this tier?), then the
+  lease (does this specific agent hold the scope, budget, and a valid grant?). A
+  policy denial is recorded as an autonomy violation and emits `policy.denied`.
+- Durable, policy-mediated memory (`durable_memory.py`): organizational records each
+  carry a sensitivity scope. Every read/write is authorized two ways — the acting
+  lease must grant the record's scope (least privilege) AND policy must allow the
+  memory action — and every access emits evidence. Records are content-addressed with
+  the same canonical SHA-256 as the ledger, so tampering is detectable on read.
+
 ## Phased plan
 
 1. **Foundations (Weeks 1–2, done):** Rust core, PyO3 bindings, Pydantic models,
@@ -119,8 +144,9 @@ signs the limit; the holder tracks spend. A regression test
    governance bridge to the Rust core, a framework-agnostic governed execution
    engine, and a LangGraph StateGraph with human-in-the-loop approval checkpoints
    and per-node evidence emission.
-3. **Governance & Memory (Weeks 5–6):** hybrid policy engine (critical parts in
-   Rust), budget tracking, earned-autonomy tiers, durable memory.
+3. **Governance & Memory (Weeks 5–6, done):** hybrid policy engine (critical parts in
+   Rust), runtime budget enforcement, earned-autonomy tiers, policy-mediated durable
+   memory.
 4. **MCP + Sandbox (Week 7):** MCP client and adapters in Python, all tool calls
    routed through the Rust governance layer, Rust-controlled sandbox, proxy gateway.
 5. **UI + Demo + Hardening (Weeks 8–10):** Tauri + React desktop app, intent console,

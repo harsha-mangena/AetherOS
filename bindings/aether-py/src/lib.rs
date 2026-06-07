@@ -10,10 +10,12 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyType;
 
+use aether_core::autonomy::AutonomyRecord as CoreAutonomy;
 use aether_core::error::CoreError;
 use aether_core::evidence::EvidenceLedger as CoreLedger;
 use aether_core::identity::{verify_signature as core_verify, AgentIdentity as CoreIdentity};
 use aether_core::lease::{Budget as CoreBudget, CapabilityLease as CoreLease};
+use aether_core::policy::{PolicyRequest as CoreReq, PolicySet as CorePolicySet};
 
 /// Map a core error into an appropriate Python exception.
 fn map_err(e: CoreError) -> PyErr {
@@ -269,6 +271,106 @@ impl PyEvidenceLedger {
     }
 }
 
+/// A policy engine wrapping the integrity-critical Rust evaluation core.
+///
+/// Constructed from a JSON policy set; evaluates JSON requests and returns JSON
+/// decisions. Rule authoring/loading lives in Python; the allow/deny computation
+/// (deny-overrides, default-deny) lives in Rust where it cannot be bypassed.
+#[pyclass(name = "PolicyEngine")]
+struct PyPolicyEngine {
+    inner: CorePolicySet,
+}
+
+#[pymethods]
+impl PyPolicyEngine {
+    /// Build a policy engine from a JSON policy-set document.
+    #[staticmethod]
+    fn from_json(json: String) -> PyResult<Self> {
+        let inner: CorePolicySet =
+            serde_json::from_str(&json).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(PyPolicyEngine { inner })
+    }
+
+    /// Number of rules in the set.
+    #[getter]
+    fn rule_count(&self) -> usize {
+        self.inner.rules.len()
+    }
+
+    /// Evaluate a JSON request and return the decision as a JSON string.
+    fn evaluate(&self, request_json: String) -> PyResult<String> {
+        let req: CoreReq = serde_json::from_str(&request_json)
+            .map_err(|e| PyValueError::new_err(format!("request_json: {e}")))?;
+        let decision = self.inner.evaluate(&req);
+        serde_json::to_string(&decision).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+}
+
+/// An agent's earned-autonomy record (governance state owned by the Rust core).
+#[pyclass(name = "AutonomyRecord")]
+struct PyAutonomyRecord {
+    inner: CoreAutonomy,
+}
+
+#[pymethods]
+impl PyAutonomyRecord {
+    /// Create a record for an agent with explicit promotion threshold and max tier.
+    #[new]
+    fn new(agent_id: String, promotion_threshold: u32, max_tier: u8) -> Self {
+        PyAutonomyRecord {
+            inner: CoreAutonomy::with_policy(agent_id, promotion_threshold, max_tier),
+        }
+    }
+
+    /// Rehydrate from JSON.
+    #[classmethod]
+    fn from_json(_cls: &Bound<'_, PyType>, json: String) -> PyResult<Self> {
+        let inner: CoreAutonomy =
+            serde_json::from_str(&json).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(PyAutonomyRecord { inner })
+    }
+
+    #[getter]
+    fn agent_id(&self) -> String {
+        self.inner.agent_id.clone()
+    }
+
+    #[getter]
+    fn tier(&self) -> u8 {
+        self.inner.tier
+    }
+
+    #[getter]
+    fn success_streak(&self) -> u32 {
+        self.inner.success_streak
+    }
+
+    #[getter]
+    fn total_successes(&self) -> u64 {
+        self.inner.total_successes
+    }
+
+    #[getter]
+    fn total_violations(&self) -> u64 {
+        self.inner.total_violations
+    }
+
+    /// Record a successful governed run. Returns True if promoted.
+    fn record_success(&mut self) -> bool {
+        self.inner.record_success()
+    }
+
+    /// Record a violation. Returns True if demoted.
+    fn record_violation(&mut self) -> bool {
+        self.inner.record_violation()
+    }
+
+    /// Serialize to JSON.
+    fn to_json(&self) -> PyResult<String> {
+        serde_json::to_string(&self.inner).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+}
+
 /// The native AetherOS extension module.
 #[pymodule]
 fn _aether_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -276,6 +378,8 @@ fn _aether_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAgentIdentity>()?;
     m.add_class::<PyCapabilityLease>()?;
     m.add_class::<PyEvidenceLedger>()?;
+    m.add_class::<PyPolicyEngine>()?;
+    m.add_class::<PyAutonomyRecord>()?;
     m.add_function(wrap_pyfunction!(verify_signature, m)?)?;
     Ok(())
 }
