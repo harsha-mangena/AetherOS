@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  rust:
+    name: Rust core (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format check
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy -p aether-core -- -D warnings
+      - name: Test core
+        run: cargo test -p aether-core
+
+  python:
+    name: Python bindings + orchestrator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: pip install uv
+      - name: Create venv and install deps
+        run: |
+          uv venv .venv
+          . .venv/bin/activate
+          uv pip install maturin "pydantic>=2.7,<3" pyyaml "pytest>=8"
+      - name: Build native extension
+        run: |
+          . .venv/bin/activate
+          cd bindings/aether-py && maturin develop --release
+      - name: Install orchestrator
+        run: |
+          . .venv/bin/activate
+          uv pip install -e python/ --no-deps
+      - name: Run Python tests
+        run: |
+          . .venv/bin/activate
+          python -m pytest python/tests/ bindings/aether-py/tests/ -q

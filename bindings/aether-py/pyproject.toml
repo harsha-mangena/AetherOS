@@ -1,0 +1,31 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "aetheros-core"
+version = "0.1.0"
+description = "Python bindings and Pydantic models for the AetherOS Rust core"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "AetherOS Team" }]
+dependencies = [
+    "pydantic>=2.7,<3",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8",
+    "pytest-cov>=5",
+]
+
+[tool.maturin]
+# The Rust cdylib is compiled into the `aetheros` package as `_aether_native`.
+python-source = "python"
+module-name = "aetheros._aether_native"
+manifest-path = "Cargo.toml"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

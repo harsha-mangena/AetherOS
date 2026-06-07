@@ -1,0 +1,46 @@
+# AetherOS configuration (defaults).
+#
+# Zero-hardcoding principle: all tunable behavior is expressed here and loaded at
+# runtime. Code reads from this config rather than embedding constants. Environment
+# overrides use the prefix AETHER__ with double-underscore nesting, e.g.
+# AETHER__GOVERNANCE__DEFAULT_BUDGET_MINOR=50000.
+
+core:
+  # ISO 4217 currency used when a budget currency is not otherwise specified.
+  default_currency: "USD"
+  # Hash algorithm used by the evidence ledger (informational; core uses SHA-256).
+  ledger_hash: "sha256"
+
+identity:
+  # Default RFC3339 timestamp precision is seconds; identities are UTC.
+  timezone: "UTC"
+
+governance:
+  # Default capability-lease time-to-live, in seconds (1 hour).
+  default_lease_ttl_seconds: 3600
+  # Default per-lease budget in minor currency units (cents) => $100.00.
+  default_budget_minor: 10000
+  # Whether human approval is required before high-impact actions.
+  require_human_approval: true
+  # Scopes considered high-impact and always requiring approval.
+  high_impact_scopes:
+    - "tool:*.write"
+    - "tool:*.delete"
+    - "infra:*.restart"
+    - "infra:*.deploy"
+
+memory:
+  # Maximum entries retained in ephemeral task memory before summarization.
+  ephemeral_max_entries: 200
+  # Durable memory namespace prefix.
+  durable_namespace: "org"
+
+evidence:
+  # Filesystem path (relative to data dir) for the persisted ledger.
+  ledger_path: "data/evidence.ledger"
+
+orchestration:
+  # Maximum number of plan steps the intent compiler may emit.
+  max_plan_steps: 25
+  # Default model used for intent compilation (resolved by the runtime/env).
+  default_model: "configured-by-runtime"

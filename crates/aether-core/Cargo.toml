@@ -1,0 +1,29 @@
+[package]
+name = "aether-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "AetherOS core security primitives: identity, capability leases, evidence ledger"
+
+[lib]
+name = "aether_core"
+crate-type = ["rlib"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+ed25519-dalek.workspace = true
+sha2.workspace = true
+rand.workspace = true
+rand_core.workspace = true
+uuid.workspace = true
+time.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+base64.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

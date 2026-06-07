@@ -1,0 +1,21 @@
+[package]
+name = "aether-py"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "PyO3 bindings exposing AetherOS core primitives to Python"
+
+[lib]
+name = "_aether_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+aether-core = { path = "../../crates/aether-core" }
+serde_json.workspace = true
+
+[dependencies.pyo3]
+version = "0.23"
+features = ["extension-module"]
