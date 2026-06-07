@@ -4,6 +4,11 @@ members = [
     "crates/aether-core",
     "bindings/aether-py",
 ]
+# The Tauri desktop shell is intentionally excluded: it pulls the heavy webview/GUI
+# toolchain and must never be built when testing the security core.
+exclude = [
+    "ui/src-tauri",
+]
 
 [workspace.package]
 version = "0.1.0"

@@ -24,30 +24,60 @@ ledger — sitting on top of existing systems through the Model Context Protocol
 ## Repository layout
 
 ```
-crates/aether-core      Rust core: identity, leases, evidence ledger, canonical hashing
+crates/aether-core      Rust core: identity, leases, evidence ledger, canonical hashing,
+                        policy engine, earned-autonomy tiers
 bindings/aether-py      PyO3 bindings + Pydantic models (the `aetheros` package)
-python/                 Orchestration layer (config, memory, LangGraph — later phases)
+python/                 Orchestration layer: intent compiler, governed engine, LangGraph,
+                        hybrid memory, MCP adapters, sandbox, gateway, control-plane API
 config/                 Config-driven defaults (zero-hardcoding)
-ui/                     Tauri + React desktop app (Phase 5)
+ui/                     Tauri + React desktop app (Intent Console, Execution Canvas,
+                        Evidence Viewer, Governance Admin)
+examples/               End-to-end Production Incident demo
 docs/                   Architecture and design docs
 ```
 
 ## Status
 
-Phase 1 (Foundations) is complete: Rust core primitives with full test coverage,
-PyO3 bindings usable from Python, Pydantic models, config system, and ephemeral
-memory. See `docs/architecture/overview.md` and the per-phase notes.
+All five MVP phases are implemented and tested end to end:
+
+1. Foundations — Rust core primitives, PyO3 bindings, Pydantic models, config, memory.
+2. Orchestration — intent compiler, governed engine, LangGraph human-in-the-loop graph.
+3. Governance & Memory — Rust-evaluated policy engine, runtime budgets, earned autonomy,
+   policy-mediated durable memory.
+4. MCP + Sandbox — MCP adapters, all tool calls routed through the Rust governance gate
+   then an egress-controlled sandbox with provenance, proxy gateway.
+5. Desktop UI + Control Plane — FastAPI control plane over a resumable run service, and a
+   Tauri + React desktop app with four governance surfaces.
+
+The full governed flow — intent → least-privilege plan → policy + lease authorization →
+sandboxed execution with provenance → human approval gates → tamper-evident, replayable
+evidence — is validated by the test suite and live over HTTP. See
+`docs/architecture/overview.md`.
 
 ## Development
 
 Prerequisites: Rust (stable), Python 3.10+, [`uv`](https://docs.astral.sh/uv/),
-and [`maturin`](https://www.maturin.rs/).
+[`maturin`](https://www.maturin.rs/), and Node 20+ for the UI.
 
 ```bash
 # Set up the Python environment and build the native extension
 make setup        # create venv, install deps, build the Rust extension into Python
 make test         # run Rust + Python test suites
 make fmt          # format Rust and check Python
+```
+
+## Run the demo
+
+Headless end-to-end governed run (no GUI):
+
+```bash
+python examples/incident_demo.py
+```
+
+Full desktop experience (control-plane API + React UI):
+
+```bash
+./scripts/run_desktop.sh      # starts the API, then the UI on http://localhost:5173
 ```
 
 ## License

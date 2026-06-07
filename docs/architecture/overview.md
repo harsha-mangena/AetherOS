@@ -168,6 +168,37 @@ Phase 4 success criterion met: agents can safely use real tools under governance
 every tool call is policy- and lease-authorized first, then executed in an
 egress-controlled sandbox with provenance recorded in the tamper-evident ledger.
 
+## Desktop UI + Control Plane (Phase 5)
+
+The product gains a professional native desktop experience and a stable API that keeps
+the governance moat entirely UI-agnostic.
+
+- Control-plane API (`api.py`): a thin FastAPI surface over a resumable run service.
+  Endpoints cover health, the active policy set, run creation, advance, resume (apply a
+  human approval decision), and evidence retrieval. It is independently runnable and
+  testable (uvicorn / httpx / curl), so the full stack is de-riskable headlessly before
+  any GUI exists.
+- Resumable run service (`run_service.py`): a UI-agnostic state machine layered over the
+  framework-agnostic engine primitives (authorize → sandboxed execute → charge →
+  record). A human approval gate spans multiple client requests, so the service executes
+  step by step, pauses at high-impact steps (`awaiting_approval`), persists the paused
+  position, and continues on `resume`. Every decision still flows through the Rust policy
+  engine + capability lease and the tamper-evident ledger; the UI never re-implements
+  governance.
+- Desktop app (`ui/`): Tauri + React + TypeScript (Vite) with four surfaces — Intent
+  Console (compile a goal into a governed plan), Execution Canvas (watch the governed
+  run with live human approval gates), Evidence Ledger (verify + replay the hash chain),
+  and Governance Admin (inspect the enforced policy set, autonomy tiers, budgets). The
+  React app is fully typed against the API contract and builds under strict TypeScript.
+- Thin shell: the Tauri crate (`ui/src-tauri/`) hosts the built React app and is excluded
+  from the core Cargo workspace, so `cargo test` on the security core never pulls the
+  webview/GUI toolchain. The desktop layer carries no security-critical logic.
+
+The full stack was validated live over HTTP: an intent compiled to a five-step plan,
+two human approval gates (infra restart, incident post), all steps executed in the
+sandbox with provenance, and the tamper-evident ledger verified with every tool.invoked
+entry carrying a provenance id — exactly what the React UI drives.
+
 ## Phased plan
 
 1. **Foundations (Weeks 1–2, done):** Rust core, PyO3 bindings, Pydantic models,
@@ -182,5 +213,6 @@ egress-controlled sandbox with provenance recorded in the tamper-evident ledger.
 4. **MCP + Sandbox (Week 7, done):** MCP client and config-driven adapters, all tool
    calls routed through the Rust governance gate then an egress-controlled sandbox
    with provenance, proxy gateway egress allowlist.
-5. **UI + Demo + Hardening (Weeks 8–10):** Tauri + React desktop app, intent console,
-   live execution canvas, admin surfaces, end-to-end Production Incident demo.
+5. **UI + Demo (Weeks 8–10, done):** FastAPI control plane + resumable run service,
+   Tauri + React desktop app with Intent Console, live Execution Canvas, Evidence
+   Viewer, and Governance Admin; end-to-end Production Incident demo validated live.
