@@ -38,7 +38,7 @@ jobs:
         run: |
           uv venv .venv
           . .venv/bin/activate
-          uv pip install maturin "pydantic>=2.7,<3" pyyaml "pytest>=8"
+          uv pip install maturin "pydantic>=2.7,<3" pyyaml "pytest>=8" "langgraph>=0.2"
       - name: Build native extension
         run: |
           . .venv/bin/activate
