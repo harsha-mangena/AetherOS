@@ -112,7 +112,10 @@ class AuthService:
                 "expected 'HS256' or 'EdDSA'"
             )
         self._keystore = (
-            TenantKeyStore(config.token_keystore_dir)
+            TenantKeyStore(
+                config.token_keystore_dir,
+                passphrase=getattr(config, "keystore_passphrase", ""),
+            )
             if self._algorithm == "EdDSA"
             else None
         )

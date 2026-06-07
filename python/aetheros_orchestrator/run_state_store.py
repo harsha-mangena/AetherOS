@@ -87,6 +87,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
+from .secret_box import SecretBox, optional_box
+
 
 # ── Abstract interface (mirrors ledger_store.LedgerStore) ──────────────────────
 
@@ -246,12 +248,68 @@ class SQLiteRunStateStore(RunStateStore):
             return rows
 
 
+# ── Encrypted wrapper ─────────────────────────────────────────────────────────
+
+
+class EncryptedRunStateStore(RunStateStore):
+    """Transparent encryption wrapper for any ``RunStateStore`` backend.
+
+    Wraps an inner store so that every ``state_json`` blob written to SQLite is
+    AES-256-GCM-encrypted (via ``SecretBox``) and every blob read back is
+    decrypted and authenticated before being returned to the caller.  The inner
+    store sees only ciphertext; the SQLite file on disk never contains plaintext
+    secret seeds.
+
+    Backward-compatibility: constructed only when a non-empty passphrase is
+    supplied (see ``make_run_state_store``).  When passphrase is empty, the inner
+    store is returned directly and all behavior is byte-for-byte identical to
+    prior phases.
+
+    Thread-safety: delegates to the inner store's own locking.
+
+    References
+    ──────────
+    * Security note in ``RunStateStore`` docstring (Phase 13): "a networked
+      deployment would wrap ``RunStateStore`` with an at-rest encryption layer" —
+      this is that upgrade.
+    * ``secret_box.SecretBox``: AES-256-GCM + scrypt envelope (NIST SP 800-38D,
+      RFC 7914).
+    """
+
+    def __init__(self, inner: RunStateStore, box: SecretBox) -> None:
+        self._inner = inner
+        self._box = box
+
+    def persist(self, tenant_id: str, run_id: str, state_json: str) -> None:
+        ciphertext = self._box.encrypt(state_json.encode("utf-8"))
+        # Store as hex so the TEXT column in SQLite remains valid UTF-8.
+        self._inner.persist(tenant_id, run_id, ciphertext.hex())
+
+    def load(self, tenant_id: str, run_id: str) -> str | None:
+        raw = self._inner.load(tenant_id, run_id)
+        if raw is None:
+            return None
+        return self._box.decrypt(bytes.fromhex(raw)).decode("utf-8")
+
+    def delete(self, tenant_id: str, run_id: str) -> None:
+        self._inner.delete(tenant_id, run_id)
+
+    def load_all(self, tenant_id: str | None = None) -> list[tuple[str, str, str]]:
+        rows = self._inner.load_all(tenant_id)
+        result = []
+        for t, r, raw in rows:
+            plaintext = self._box.decrypt(bytes.fromhex(raw)).decode("utf-8")
+            result.append((t, r, plaintext))
+        return result
+
+
 # ── Factory function (used by RunService) ─────────────────────────────────────
 
 
 def make_run_state_store(
     backend: str = "none",
     db_dir: str = "./run_states",
+    passphrase: str = "",
 ) -> RunStateStore:
     """Construct the appropriate ``RunStateStore`` for a service.
 
@@ -259,7 +317,15 @@ def make_run_state_store(
     pre-Phase-13 in-memory-only behaviour, so every existing test passes unchanged.
     ``backend="sqlite"`` returns a ``SQLiteRunStateStore`` that persists each run's
     state after every state-machine transition and repopulates runs on startup.
+    ``passphrase`` (Phase 16): when non-empty, wraps the SQLite store with an
+    ``EncryptedRunStateStore`` so every ``state_json`` blob is AES-256-GCM-encrypted
+    (scrypt key derivation) before hitting SQLite.  Plaintext mode (empty passphrase,
+    the default) is byte-for-byte identical to prior phases.
     """
     if backend == "sqlite":
-        return SQLiteRunStateStore(db_dir=db_dir)
+        inner: RunStateStore = SQLiteRunStateStore(db_dir=db_dir)
+        box = optional_box(passphrase)
+        if box is not None:
+            return EncryptedRunStateStore(inner, box)
+        return inner
     return NoRunStateStore()

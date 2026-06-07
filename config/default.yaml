@@ -152,6 +152,9 @@ storage:
   persist_runs: false
   # Directory for the per-tenant run-state SQLite databases.
   run_state_db_dir: "./run_states"
+  # At-rest encryption passphrase for run-state SQLite blobs (Phase 16).
+  # Empty = plaintext (default). Set AETHER__STORAGE__ENCRYPTION_PASSPHRASE in production.
+  encryption_passphrase: ""
 
 # ── Authentication (Phase 12) ──────────────────────────────────────────────
 # JWT Bearer-token gate for the control-plane API.
@@ -176,6 +179,9 @@ auth:
   # (revocations lost on restart, the default). Set a path so revoked tokens stay
   # revoked across restarts; the denylist self-prunes entries past their own expiry.
   revocation_store_dir: ""
+  # At-rest encryption passphrase for per-tenant Ed25519 keystore PEM files (Phase 16).
+  # Empty = plaintext PEM (default). Set AETHER__AUTH__KEYSTORE_PASSPHRASE in production.
+  keystore_passphrase: ""
 
 sandbox:
   # Execution backend for governed tool calls. "local" = in-process sandbox with a

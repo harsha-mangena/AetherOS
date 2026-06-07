@@ -313,6 +313,7 @@ class RunService:
         self._run_store: RunStateStore = make_run_state_store(
             backend="sqlite" if scfg.persist_runs else "none",
             db_dir=scfg.run_state_db_dir,
+            passphrase=getattr(scfg, "encryption_passphrase", ""),
         )
         if self._persist_runs:
             self._restore_runs_from_storage()

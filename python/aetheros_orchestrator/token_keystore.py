@@ -57,6 +57,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
 )
+from cryptography.hazmat.primitives.serialization import (
+    BestAvailableEncryption,
+    NoEncryption,
+)
 
 
 def _b64url_no_pad(raw: bytes) -> str:
@@ -76,12 +80,16 @@ class TenantKeyStore:
     run-state stores sanitise tenant identifiers before touching the filesystem.
     """
 
-    def __init__(self, db_dir: str | Path = "") -> None:
+    def __init__(self, db_dir: str | Path = "", passphrase: str = "") -> None:
         self._db_dir = Path(db_dir) if db_dir else None
         if self._db_dir is not None:
             self._db_dir.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, Ed25519PrivateKey] = {}
         self._lock = threading.RLock()
+        # Phase 16: when non-empty, PKCS#8 PEM files are encrypted with PBES2
+        # (BestAvailableEncryption = PBKDF2-HMAC-SHA512 + AES-256-CBC, RFC 8018 §6.2).
+        # Empty passphrase = plaintext PEM, byte-for-byte identical to Phase 14/15.
+        self._passphrase: bytes = passphrase.encode("utf-8") if passphrase else b""
 
     # ── filesystem helpers ────────────────────────────────────────────────────
 
@@ -98,7 +106,8 @@ class TenantKeyStore:
         path = self._key_path(tenant_id)
         if path is None or not path.exists():
             return None
-        key = serialization.load_pem_private_key(path.read_bytes(), password=None)
+        password = self._passphrase if self._passphrase else None
+        key = serialization.load_pem_private_key(path.read_bytes(), password=password)
         if not isinstance(key, Ed25519PrivateKey):
             raise ValueError(f"keystore file for tenant {tenant_id!r} is not Ed25519")
         return key
@@ -107,10 +116,20 @@ class TenantKeyStore:
         path = self._key_path(tenant_id)
         if path is None:
             return
+        # Phase 16: use PKCS#8 PBES2 encryption when a passphrase is configured
+        # (RFC 8018 §6.2 — BestAvailableEncryption selects PBKDF2-HMAC-SHA512 +
+        # AES-256-CBC, which is what the cryptography library emits for Ed25519
+        # keys).  Plaintext mode (empty passphrase) is byte-for-byte identical to
+        # all prior phases.
+        enc_alg = (
+            BestAvailableEncryption(self._passphrase)
+            if self._passphrase
+            else NoEncryption()
+        )
         pem = key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
+            encryption_algorithm=enc_alg,
         )
         # Write atomically and restrict permissions — this is secret signing material.
         tmp = path.with_suffix(".pem.tmp")

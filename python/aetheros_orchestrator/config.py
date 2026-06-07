@@ -132,6 +132,17 @@ class StorageConfig(BaseModel):
     # Directory for the per-tenant run-state SQLite databases.
     run_state_db_dir: str = "./run_states"
 
+    # ── At-rest encryption (Phase 16) ─────────────────────────────────────────
+    # Operator passphrase for AES-256-GCM at-rest encryption of secrets stored in
+    # SQLite and on-disk PEM files. When non-empty, ``state_json`` blobs persisted
+    # by ``RunStateStore`` (which contain Ed25519 seed_hex values) and per-tenant
+    # Ed25519 PKCS#8 PEM files written by ``TenantKeyStore`` are encrypted with an
+    # authenticated envelope (AES-256-GCM, scrypt KDF — NIST SP 800-38D, RFC 7914).
+    # Empty string (the default) = plaintext mode — byte-for-byte identical to all
+    # prior phases; no existing test requires modification.
+    # Set via AETHER__STORAGE__ENCRYPTION_PASSPHRASE env var in production.
+    encryption_passphrase: str = ""
+
 
 class AuthConfig(BaseModel):
     """API authentication configuration (Phase 12).
@@ -175,6 +186,12 @@ class AuthConfig(BaseModel):
     # their own exp. Empty string = in-memory revocation only (lost on restart —
     # identical to Phase 12/14 behaviour, the default).
     revocation_store_dir: str = ""
+    # At-rest encryption passphrase for the per-tenant Ed25519 keystore PEM files
+    # (Phase 16). When non-empty, each tenant's PKCS#8 PEM file is written with
+    # PBES2 encryption (BestAvailableEncryption — RFC 8018 §6.2). Empty string =
+    # plaintext PEM, byte-for-byte identical to Phase 14/15. Set via
+    # AETHER__AUTH__KEYSTORE_PASSPHRASE env var in production.
+    keystore_passphrase: str = ""
 
 
 class GatewayConfigModel(BaseModel):
