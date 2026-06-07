@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aetheros-orchestrator"
-version = "0.2.0"
-description = "AetherOS orchestration layer: intent compilation, governed task graphs, hybrid memory"
+version = "0.4.0"
+description = "AetherOS orchestration layer: intent compilation, governed task graphs, hybrid memory, MCP + sandbox"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
@@ -20,6 +20,9 @@ dependencies = [
 orchestration = [
     "langgraph>=0.2",
     "langchain-core>=0.3",
+]
+mcp = [
+    "mcp>=1.0",
 ]
 test = [
     "pytest>=8",

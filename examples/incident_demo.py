@@ -21,6 +21,8 @@ from aetheros_orchestrator import (
     GovernedEngine,
     Intent,
     IntentCompiler,
+    build_local_sandbox,
+    default_incident_adapter,
     load_config,
 )
 from aetheros_orchestrator.models import PlanStep
@@ -70,7 +72,15 @@ def main() -> int:
     print(f"  scopes: {len(ctx.lease.scopes)}  budget: {intent.budget_minor} minor")
     print(f"  earned autonomy tier: {ctx.autonomy_tier}\n")
 
-    outcome = GovernedEngine(ctx, approval=approval).run(plan)
+    # Phase 4: execute every governed tool call inside the Rust-controlled sandbox,
+    # which enforces egress allowlists for external tools and records verifiable
+    # provenance tied into the evidence ledger.
+    sandbox, destinations = build_local_sandbox(config, default_incident_adapter())
+    print("Sandbox: local backend, egress-controlled MCP tool execution with provenance\n")
+
+    outcome = GovernedEngine(
+        ctx, approval=approval, sandbox=sandbox, destinations=destinations
+    ).run(plan)
 
     print("\n" + "-" * 68)
     print(f"Run completed: {outcome.completed}  "
@@ -82,8 +92,10 @@ def main() -> int:
     print(f"\nEvidence ledger: {ledger.length} entries, "
           f"integrity verified: {ledger.verify()}")
     print("Replay:")
-    for seq, event_type, actor in ledger.replay():
-        print(f"  #{seq:<2} {event_type:<20} by {actor}")
+    for entry in ledger.entries():
+        prov = entry.payload.get("provenance_id") if isinstance(entry.payload, dict) else None
+        prov_str = f"  prov={prov[:12]}…" if prov else ""
+        print(f"  #{entry.seq:<2} {entry.event_type:<20} by {entry.actor[:18]}{prov_str}")
 
     return 0 if outcome.completed else 1
 

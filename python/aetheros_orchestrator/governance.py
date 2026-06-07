@@ -199,23 +199,30 @@ class GovernanceContext:
             {"step_id": step.step_id, "scope": step.scope},
         )
 
-    def charge_and_record(self, step: PlanStep, actual_cost_minor: int, output_summary) -> int:
+    def charge_and_record(
+        self, step: PlanStep, actual_cost_minor: int, output_summary, provenance_id: str | None = None
+    ) -> int:
         """Charge the Rust-tracked budget for a successful step and record evidence.
 
-        Returns the evidence sequence number of the tool.invoked entry.
+        Returns the evidence sequence number of the tool.invoked entry. When the step
+        executed inside a sandbox, `provenance_id` ties the ledger entry to the
+        verifiable sandbox provenance record (Phase 4).
         """
         assert self.lease is not None
         self.lease.record_spend(actual_cost_minor)
+        payload = {
+            "step_id": step.step_id,
+            "tool": step.tool,
+            "scope": step.scope,
+            "cost_minor": actual_cost_minor,
+            "remaining_minor": self.lease.remaining_minor,
+            "output": output_summary,
+        }
+        if provenance_id is not None:
+            payload["provenance_id"] = provenance_id
         seq, _hash = self.ledger.append(
             self.agent.agent_id,
             "tool.invoked",
-            {
-                "step_id": step.step_id,
-                "tool": step.tool,
-                "scope": step.scope,
-                "cost_minor": actual_cost_minor,
-                "remaining_minor": self.lease.remaining_minor,
-                "output": output_summary,
-            },
+            payload,
         )
         return seq

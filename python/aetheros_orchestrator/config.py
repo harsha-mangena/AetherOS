@@ -69,6 +69,20 @@ class AutonomyConfig(BaseModel):
     max_tier: int = 3
 
 
+class GatewayConfigModel(BaseModel):
+    allow_destinations: list[str] = Field(default_factory=list)
+    external_tools: list[str] = Field(default_factory=list)
+    deny_by_default: bool = True
+
+
+class SandboxConfig(BaseModel):
+    backend: str = "local"
+    timeout_seconds: float = 10.0
+    # Map of tool name -> external destination (used for egress checks).
+    tool_destinations: dict[str, str] = Field(default_factory=dict)
+    gateway: GatewayConfigModel = Field(default_factory=GatewayConfigModel)
+
+
 class AetherConfig(BaseModel):
     """Top-level validated configuration for AetherOS."""
 
@@ -80,6 +94,7 @@ class AetherConfig(BaseModel):
     orchestration: OrchestrationConfig = Field(default_factory=OrchestrationConfig)
     policy: PolicyConfig = Field(default_factory=PolicyConfig)
     autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
 
 
 def _default_config_path() -> Path:

@@ -136,6 +136,38 @@ Governance moves from advisory to enforced, and memory becomes policy-mediated.
   memory action — and every access emits evidence. Records are content-addressed with
   the same canonical SHA-256 as the ledger, so tampering is detectable on read.
 
+## MCP + Sandbox (Phase 4)
+
+Tool execution becomes MCP-native and sandbox-controlled, with the governance gate
+strictly upstream of execution.
+
+- MCP adapters (`mcp_adapter.py`): an `MCPAdapter` interface (`list_tools` /
+  `call_tool`) the engine depends on. `MockMCPAdapter` exposes the incident toolset
+  in-process for hermetic tests and the offline demo; `StdioMCPServerConfig` is the
+  config seam for launching a real MCP server via the official SDK without changing
+  callers. AetherOS governs MCP calls; it does not replace MCP.
+- Egress proxy gateway (`gateway.py`): external, side-effecting tools must declare a
+  destination that matches a configured glob allowlist; anything else raises
+  `EgressDenied`. Internal/read-only tools bypass egress control but remain subject to
+  the upstream policy + lease gate. Deny-by-default for undeclared external calls.
+- Sandbox controller (`sandbox.py`): every governed tool call runs inside a
+  `SandboxController`. `LocalSandbox` adds a wall-clock timeout guard, routes external
+  calls through the gateway, and emits a content-addressed (canonical SHA-256)
+  `ProvenanceRecord`. The backend is pluggable (native-process / E2B drop in via
+  config). Authorization is NOT done here — the engine's policy+lease gate already ran.
+- Engine integration: `GovernedEngine` executes step tools through the sandbox when one
+  is configured, and threads the provenance id into the `tool.invoked` evidence entry,
+  so any recorded result is tied to a verifiable execution record. A blocked egress or
+  timeout surfaces as `tool.failed` evidence and halts the run.
+
+All of this is config-driven (`sandbox:` section in `config/default.yaml`): backend,
+timeout, per-tool destinations, and the egress allowlist. `build_local_sandbox` wires
+the whole governed-execution stack from config alone.
+
+Phase 4 success criterion met: agents can safely use real tools under governance —
+every tool call is policy- and lease-authorized first, then executed in an
+egress-controlled sandbox with provenance recorded in the tamper-evident ledger.
+
 ## Phased plan
 
 1. **Foundations (Weeks 1–2, done):** Rust core, PyO3 bindings, Pydantic models,
@@ -147,7 +179,8 @@ Governance moves from advisory to enforced, and memory becomes policy-mediated.
 3. **Governance & Memory (Weeks 5–6, done):** hybrid policy engine (critical parts in
    Rust), runtime budget enforcement, earned-autonomy tiers, policy-mediated durable
    memory.
-4. **MCP + Sandbox (Week 7):** MCP client and adapters in Python, all tool calls
-   routed through the Rust governance layer, Rust-controlled sandbox, proxy gateway.
+4. **MCP + Sandbox (Week 7, done):** MCP client and config-driven adapters, all tool
+   calls routed through the Rust governance gate then an egress-controlled sandbox
+   with provenance, proxy gateway egress allowlist.
 5. **UI + Demo + Hardening (Weeks 8–10):** Tauri + React desktop app, intent console,
    live execution canvas, admin surfaces, end-to-end Production Incident demo.

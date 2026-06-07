@@ -28,6 +28,22 @@ from .models import (
 )
 from .planner import LLMPlanner, Planner, RuleBasedPlanner
 from .policy import PolicyDecision, PolicyEngine
+from .gateway import EgressDenied, GatewayConfig, ProxyGateway
+from .mcp_adapter import (
+    MCPAdapter,
+    MockMCPAdapter,
+    StdioMCPServerConfig,
+    ToolSpec,
+    default_incident_adapter,
+)
+from .sandbox import (
+    LocalSandbox,
+    ProvenanceRecord,
+    SandboxController,
+    SandboxExecutionError,
+    SandboxResult,
+    build_local_sandbox,
+)
 from .tools import ToolRegistry, default_registry
 
 __all__ = [
@@ -64,6 +80,21 @@ __all__ = [
     "PolicyEngine",
     "PolicyDecision",
     "AutonomyTracker",
+    # MCP + sandbox (Phase 4)
+    "MCPAdapter",
+    "MockMCPAdapter",
+    "StdioMCPServerConfig",
+    "ToolSpec",
+    "default_incident_adapter",
+    "ProxyGateway",
+    "GatewayConfig",
+    "EgressDenied",
+    "LocalSandbox",
+    "SandboxController",
+    "SandboxResult",
+    "SandboxExecutionError",
+    "ProvenanceRecord",
+    "build_local_sandbox",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

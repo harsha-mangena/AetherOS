@@ -23,6 +23,7 @@ from typing import Callable
 
 from .governance import GovernanceContext
 from .models import ExecutionOutcome, ExecutionPlan, PlanStep, StepResult, StepStatus
+from .sandbox import SandboxController, SandboxExecutionError
 from .tools import ToolRegistry, default_registry
 
 # An approval callback receives the step awaiting approval and returns (granted, approver).
@@ -47,10 +48,17 @@ class GovernedEngine:
         ctx: GovernanceContext,
         registry: ToolRegistry | None = None,
         approval: ApprovalCallback = auto_approve,
+        sandbox: SandboxController | None = None,
+        destinations: dict[str, str] | None = None,
     ) -> None:
         self._ctx = ctx
         self._registry = registry or default_registry()
         self._approval = approval
+        # Phase 4: when a sandbox is provided, tool calls execute inside it (with
+        # egress control + provenance) instead of via the raw registry.
+        self._sandbox = sandbox
+        # Optional tool -> external destination map used for egress checks.
+        self._destinations = destinations or {}
 
     def run(self, plan: ExecutionPlan, stop_on_denial: bool = True) -> ExecutionOutcome:
         results: list[StepResult] = []
@@ -93,10 +101,19 @@ class GovernedEngine:
                     break
                 continue
 
-            # 3. Execute the tool.
+            # 3. Execute the tool — inside the sandbox if one is configured (Phase 4),
+            #    otherwise directly via the registry. Either way, governance (policy +
+            #    lease) already authorized this step above.
+            provenance_id: str | None = None
             try:
-                output = self._registry.invoke(step.tool, step.arguments)
-            except Exception as exc:  # tool failure
+                if self._sandbox is not None:
+                    destination = step.arguments.get("destination") or self._destinations.get(step.tool)
+                    sb_result = self._sandbox.execute(step.tool, step.arguments, destination)
+                    output = sb_result.output
+                    provenance_id = sb_result.provenance.record_id
+                else:
+                    output = self._registry.invoke(step.tool, step.arguments)
+            except (SandboxExecutionError, Exception) as exc:  # tool/sandbox failure
                 results.append(
                     StepResult(
                         step_id=step.step_id,
@@ -104,14 +121,19 @@ class GovernedEngine:
                         detail=str(exc),
                     )
                 )
+                self._ctx.ledger.append(
+                    "control-plane",
+                    "tool.failed",
+                    {"step_id": step.step_id, "tool": step.tool, "reason": str(exc)},
+                )
                 completed = False
                 if stop_on_denial:
                     break
                 continue
 
-            # 4. Charge budget and record evidence.
+            # 4. Charge budget and record evidence (tying in sandbox provenance).
             cost = step.estimated_cost_minor
-            seq = self._ctx.charge_and_record(step, cost, output)
+            seq = self._ctx.charge_and_record(step, cost, output, provenance_id=provenance_id)
             total_cost += cost
             results.append(
                 StepResult(

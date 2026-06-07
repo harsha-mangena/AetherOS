@@ -93,3 +93,25 @@ autonomy:
   promotion_threshold: 5
   # Maximum autonomy tier an agent can reach.
   max_tier: 3
+
+sandbox:
+  # Execution backend for governed tool calls. "local" = in-process sandbox with a
+  # timeout guard + egress control + provenance. A native/E2B backend drops in here.
+  backend: "local"
+  # Wall-clock timeout per tool call, in seconds.
+  timeout_seconds: 10.0
+  # Declared external destination per side-effecting tool (used for egress checks).
+  tool_destinations:
+    service_restart: "infra.internal"
+    slack_post: "slack.com"
+  gateway:
+    # Glob allowlist of permitted egress destinations for external tools.
+    allow_destinations:
+      - "slack.com"
+      - "*.internal"
+    # Tools that have external side effects and must pass egress checks.
+    external_tools:
+      - "service_restart"
+      - "slack_post"
+    # Treat any external tool without a declared destination as denied.
+    deny_by_default: true
