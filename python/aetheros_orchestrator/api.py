@@ -178,6 +178,17 @@ def create_app(service: RunService | None = None, auth_service: "AuthService | N
             raise HTTPException(status_code=400, detail=str(exc))
         return {"revoked_jti": jti}
 
+    @app.get("/auth/jwks")
+    def jwks() -> dict[str, Any]:
+        """Publish per-tenant Ed25519 public keys as an RFC 7517 JWK Set.
+
+        Verify-only material — never contains private keys. A downstream verifier
+        selects the right key by matching a token's ``kid`` header to a JWK ``kid``.
+        Under HS256 (the default) there are no asymmetric keys, so this returns an
+        empty key set. Always unprotected: public keys are meant to be public.
+        """
+        return auth_svc.jwks()
+
     @app.get("/health")
     def health() -> dict[str, Any]:
         return {"status": "ok", "service": "aetheros-control-plane"}

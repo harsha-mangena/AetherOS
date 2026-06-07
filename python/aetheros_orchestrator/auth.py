@@ -52,6 +52,7 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 from .config import AuthConfig
+from .token_keystore import TenantKeyStore
 
 if TYPE_CHECKING:
     pass
@@ -71,6 +72,10 @@ class RevokedToken(AuthError):
 
 class AdminSecretMismatch(AuthError):
     """The admin_secret presented at the token endpoint is incorrect."""
+
+
+class UnknownTenantKey(AuthError):
+    """EdDSA: the token's kid names a tenant with no registered public key."""
 
 
 # FastAPI's HTTPBearer returns 403 by default on missing credentials; we override
@@ -116,10 +121,44 @@ class AuthService:
     def __init__(self, config: AuthConfig) -> None:
         self._config = config
         self._store = TokenStore()
+        # Per-tenant Ed25519 keystore — only materialised on the EdDSA path, but
+        # constructed eagerly so issue/validate share one instance. For HS256 it is
+        # never touched (no keys are generated), so HS256 deployments incur no
+        # filesystem activity and behave byte-for-byte as in Phase 12.
+        self._algorithm = (config.algorithm or "HS256").strip()
+        if self._algorithm not in ("HS256", "EdDSA"):
+            raise ValueError(
+                f"unsupported auth.algorithm {config.algorithm!r}; "
+                "expected 'HS256' or 'EdDSA'"
+            )
+        self._keystore = (
+            TenantKeyStore(config.token_keystore_dir)
+            if self._algorithm == "EdDSA"
+            else None
+        )
 
     @property
     def enabled(self) -> bool:
         return self._config.enabled
+
+    @property
+    def algorithm(self) -> str:
+        return self._algorithm
+
+    @property
+    def keystore(self) -> TenantKeyStore | None:
+        """The per-tenant keystore (EdDSA only); None under HS256."""
+        return self._keystore
+
+    def jwks(self) -> dict:
+        """RFC 7517 JWK Set of all known tenant public keys (EdDSA only).
+
+        Returns an empty key set under HS256 — there are no asymmetric public keys
+        to publish when signing is symmetric.
+        """
+        if self._keystore is None:
+            return {"keys": []}
+        return self._keystore.jwks()
 
     # ── token issuance ────────────────────────────────────────────────────────
 
@@ -127,8 +166,13 @@ class AuthService:
         """Issue a signed JWT for ``tenant_id``.
 
         Raises ``AdminSecretMismatch`` if ``admin_secret`` does not equal the
-        configured ``admin_secret``. In a constant-time comparison to avoid
+        configured ``admin_secret``, using a constant-time comparison to avoid
         timing side-channels.
+
+        Under HS256 the token is signed with the shared secret (Phase 12). Under
+        EdDSA the token is signed with the tenant's own Ed25519 private key and
+        carries ``kid = tenant_id`` in its JOSE header, so it can only be validated
+        against that tenant's public key.
 
         Returns a compact JWT string (header.payload.signature).
         """
@@ -146,7 +190,19 @@ class AuthService:
             "exp": now + self._config.token_ttl_seconds,
             "jti": uuid.uuid4().hex,
         }
-        token: str = _jwt.encode(
+
+        if self._algorithm == "EdDSA":
+            assert self._keystore is not None  # set whenever algorithm == EdDSA
+            signing_pem = self._keystore.private_pem(tenant_id)
+            token: str = _jwt.encode(
+                payload,
+                signing_pem,
+                algorithm="EdDSA",
+                headers={"kid": tenant_id},
+            )
+            return token
+
+        token = _jwt.encode(
             payload,
             self._config.secret,
             algorithm="HS256",
@@ -159,9 +215,21 @@ class AuthService:
         """Validate a JWT and return its decoded claims.
 
         Raises:
-          InvalidToken  — bad signature, expired, wrong algorithm, malformed.
-          RevokedToken  — jti found in the revocation set.
+          InvalidToken     — bad signature, expired, wrong algorithm, malformed.
+          UnknownTenantKey — EdDSA: kid names a tenant with no registered key.
+          RevokedToken     — jti found in the revocation set.
+
+        Under EdDSA two extra cryptographic bindings are enforced beyond a normal
+        signature check: the per-tenant public key is selected by the ``kid``
+        header (so the token must be verified against the key for the tenant it
+        names), and ``sub`` must equal ``kid`` (so a token signed by tenant A's key
+        can never validate while claiming ``sub = tenant B``).
         """
+        if self._algorithm == "EdDSA":
+            return self._validate_eddsa(token)
+        return self._validate_hs256(token)
+
+    def _validate_hs256(self, token: str) -> dict:
         try:
             claims: dict = _jwt.decode(
                 token,
@@ -177,21 +245,57 @@ class AuthService:
         jti = claims.get("jti", "")
         if self._store.is_revoked(jti):
             raise RevokedToken(f"token {jti} has been revoked")
+        return claims
 
+    def _validate_eddsa(self, token: str) -> dict:
+        assert self._keystore is not None
+        # Read the unverified header to learn which tenant key to verify against.
+        try:
+            header = _jwt.get_unverified_header(token)
+        except _jwt.InvalidTokenError as exc:
+            raise InvalidToken(f"token invalid: {exc}") from exc
+        kid = header.get("kid")
+        if not kid:
+            raise InvalidToken("token missing kid header")
+        public_pem = self._keystore.public_pem(kid)
+        if public_pem is None:
+            raise UnknownTenantKey(f"no registered key for tenant {kid!r}")
+        try:
+            claims = _jwt.decode(
+                token,
+                public_pem,
+                algorithms=["EdDSA"],
+                options={"require": ["sub", "iat", "exp", "jti"]},
+            )
+        except _jwt.ExpiredSignatureError as exc:
+            raise InvalidToken("token has expired") from exc
+        except _jwt.InvalidTokenError as exc:
+            raise InvalidToken(f"token invalid: {exc}") from exc
+
+        # Bind sub to kid: a token signed by one tenant's key cannot claim another.
+        if claims.get("sub") != kid:
+            raise InvalidToken("token sub does not match signing tenant (kid)")
+
+        jti = claims.get("jti", "")
+        if self._store.is_revoked(jti):
+            raise RevokedToken(f"token {jti} has been revoked")
         return claims
 
     def revoke_token(self, token: str) -> str:
         """Revoke a token by its jti, returning the revoked jti string.
 
-        Does a lightweight decode without signature check (the token may be
-        expired) to extract the jti, then adds it to the revocation set.
+        Does a lightweight decode without signature verification (the token may be
+        expired, and revocation should still work) to extract the jti, then adds it
+        to the revocation set. Works for both HS256 and EdDSA tokens.
         """
         try:
             claims: dict = _jwt.decode(
                 token,
-                self._config.secret,
-                algorithms=["HS256"],
-                options={"verify_exp": False, "require": ["jti"]},
+                options={
+                    "verify_signature": False,
+                    "verify_exp": False,
+                    "require": ["jti"],
+                },
             )
         except _jwt.InvalidTokenError as exc:
             raise InvalidToken(f"cannot revoke malformed token: {exc}") from exc
@@ -247,7 +351,7 @@ class AuthService:
                     detail=str(exc),
                     headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
                 )
-            except InvalidToken as exc:
+            except (InvalidToken, UnknownTenantKey) as exc:
                 raise HTTPException(
                     status_code=401,
                     detail=str(exc),

@@ -152,12 +152,23 @@ class AuthConfig(BaseModel):
 
     # Master switch. False = pass-through (backward-compatible with all tests).
     enabled: bool = False
-    # HMAC-SHA256 signing secret. Must be ≥ 32 bytes in production.
+    # Token signing algorithm. Phase 12 "HS256" (shared HMAC secret) remains the
+    # default for full backward-compatibility. Phase 14 adds "EdDSA": asymmetric
+    # per-tenant Ed25519 tokens (RFC 8037) where each tenant has its own keypair,
+    # so a compromised verifier key for one tenant cannot forge another tenant's
+    # token, and public keys can be published (JWKS) for offline verification.
+    algorithm: str = "HS256"
+    # HMAC-SHA256 signing secret (HS256 only). Must be ≥ 32 bytes in production.
     secret: str = "change-me-before-production-at-least-32-bytes!!"
     # Separate secret required at POST /auth/token to receive a JWT.
     admin_secret: str = "admin-change-me"
     # JWT lifetime in seconds (default: 1 hour).
     token_ttl_seconds: int = 3600
+    # Directory for the per-tenant Ed25519 keystore (EdDSA only). Each tenant's
+    # private key is generated on first issuance and persisted here so issued
+    # tokens stay verifiable across restarts. Empty string = ephemeral in-memory
+    # keystore (keys regenerated each process start — test/dev only).
+    token_keystore_dir: str = ""
 
 
 class GatewayConfigModel(BaseModel):

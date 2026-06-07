@@ -159,12 +159,19 @@ storage:
 auth:
   # Master switch. false = pass-through (default, all existing tests pass unchanged).
   enabled: false
-  # HMAC-SHA256 signing secret for JWTs. Must be >= 32 bytes in production.
+  # Token signing algorithm: "HS256" (shared HMAC secret, default) or "EdDSA"
+  # (asymmetric per-tenant Ed25519 tokens — RFC 8037; each tenant has its own
+  # keypair so a leaked verifier key cannot forge another tenant's token).
+  algorithm: "HS256"
+  # HMAC-SHA256 signing secret for JWTs (HS256 only). Must be >= 32 bytes in production.
   secret: "change-me-before-production-at-least-32-bytes!!"
   # Secret presented at POST /auth/token to receive a JWT (separate from signing key).
   admin_secret: "admin-change-me"
   # JWT lifetime in seconds (default: 1 hour).
   token_ttl_seconds: 3600
+  # Per-tenant Ed25519 keystore directory (EdDSA only). Empty = ephemeral in-memory
+  # keys (dev/test); set a path for keys that survive restarts.
+  token_keystore_dir: ""
 
 sandbox:
   # Execution backend for governed tool calls. "local" = in-process sandbox with a
