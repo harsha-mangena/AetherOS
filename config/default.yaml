@@ -189,7 +189,7 @@ sandbox:
   backend: "local"
   # Wall-clock timeout per tool call, in seconds.
   timeout_seconds: 10.0
-  # Declared external destination per side-effecting tool (used for egress checks).
+  # Map of tool name -> external destination (used for egress checks).
   tool_destinations:
     service_restart: "infra.internal"
     slack_post: "slack.com"
@@ -204,3 +204,26 @@ sandbox:
       - "slack_post"
     # Treat any external tool without a declared destination as denied.
     deny_by_default: true
+
+# ── Rate limiting (Phase 17) ──────────────────────────────────────────────
+# Per-tenant, per-route sliding-window rate limiter for the control-plane API.
+# Closes OWASP API Security Top 10 2023 API4: Unrestricted Resource Consumption.
+# When enabled = false (default) the limiter is a transparent no-op and all
+# prior behavior is unchanged. Set enabled: true and configure limits before
+# any networked deployment.
+rate_limit:
+  # Master switch. false = no limiting (default, backward-compatible).
+  enabled: false
+  # Window duration in seconds for the sliding-window counter.
+  window_seconds: 60
+  # Default max requests per window for routes not in route_limits. 0 = disabled.
+  default_limit: 0
+  # Per-route limits (route_key: max_requests_per_window). 0 = disabled for that route.
+  # Example production values:
+  #   runs:create: 20          # max 20 run creations per tenant per minute
+  #   runs:advance: 60         # max 60 advance calls per tenant per minute
+  #   auth:token: 10           # max 10 token issuance attempts per minute
+  #   auth:revoke: 20          # max 20 revocations per minute
+  #   marketplace:publish: 5   # max 5 skill publishes per tenant per minute
+  #   marketplace:install: 10  # max 10 skill installs per tenant per minute
+  route_limits: {}

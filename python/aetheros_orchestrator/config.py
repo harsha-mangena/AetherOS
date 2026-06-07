@@ -208,6 +208,46 @@ class SandboxConfig(BaseModel):
     gateway: GatewayConfigModel = Field(default_factory=GatewayConfigModel)
 
 
+class RateLimitConfig(BaseModel):
+    """Per-route rate limiting configuration (Phase 17).
+
+    Controls the sliding-window counter rate limiter applied to every inbound
+    request on the control-plane API. When ``enabled = False`` (the default) the
+    limiter is a transparent no-op — identical to all prior behavior, so no
+    existing test requires modification.
+
+    Algorithm: sliding-window counter (Cloudflare 2020) — accurate to within
+    ~0.4% of a true sliding window, O(1) per key. Two counters (previous window
+    + current window) derive a weighted rate estimate:
+        estimated_rate = prev × (1 − elapsed/window) + curr
+    If estimated_rate >= limit, the request is rejected with HTTP 429 and a
+    ``Retry-After`` header (RFC 6585 §4).
+
+    Per-route limits override the default for specific endpoint categories.
+    Setting a limit to 0 disables rate limiting for that category.
+
+    Zero-hardcoding: override any value via AETHER__RATE_LIMIT__* env vars.
+    """
+
+    # Master switch. false = transparent no-op (default, backward-compatible).
+    enabled: bool = False
+    # Rate-limit window duration in seconds.
+    window_seconds: int = 60
+    # Default max requests per window for routes not in route_limits.
+    # 0 = disabled (no limiting).
+    default_limit: int = 0
+    # Per-route overrides (route_key -> max requests per window).
+    # Route keys used in Phase 17:
+    #   "runs:create"       POST /runs
+    #   "runs:advance"      POST /runs/{id}/advance
+    #   "auth:token"        POST /auth/token
+    #   "auth:revoke"       POST /auth/revoke
+    #   "marketplace:publish"  POST /marketplace/skills
+    #   "marketplace:install"  POST /marketplace/skills/{id}/install
+    # 0 = disabled for that route.
+    route_limits: dict = Field(default_factory=dict)
+
+
 class AetherConfig(BaseModel):
     """Top-level validated configuration for AetherOS."""
 
@@ -224,6 +264,7 @@ class AetherConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
 
 
 def _default_config_path() -> Path:

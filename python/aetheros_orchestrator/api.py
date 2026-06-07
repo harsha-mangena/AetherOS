@@ -32,6 +32,11 @@ Endpoints:
     POST /marketplace/skills              publish a signed skill to the catalog
     POST /marketplace/skills/{skill_id}/install  install a skill under governance for a tenant
     GET  /marketplace/installed           list skills installed for the requesting tenant
+
+Rate limiting (Phase 17):
+    When rate_limit.enabled = True in config, per-tenant, per-route sliding-window
+    counters enforce configurable request limits. Breached limits return HTTP 429
+    with Retry-After. When disabled (default), all prior behavior is unchanged.
 """
 
 from __future__ import annotations
@@ -57,6 +62,7 @@ from .tenancy import (
     UnknownTenant,
 )
 from .auth import AdminSecretMismatch, AuthService, InvalidToken, RevokedToken
+from .rate_limiter import RateLimiter, RateLimitExceeded
 
 
 class CreateRunRequest(BaseModel):
@@ -139,9 +145,33 @@ def create_app(service: RunService | None = None, auth_service: "AuthService | N
     if auth_service is None:
         cfg = load_config()
         auth_svc = AuthService(cfg.auth)
+        rl_cfg = cfg.rate_limit
     else:
         auth_svc = auth_service
+        cfg = load_config()
+        rl_cfg = cfg.rate_limit
     app.state.auth_service = auth_svc
+
+    # Phase 17: per-tenant, per-route sliding-window rate limiter.
+    # When rate_limit.enabled = False (default) the limiter never raises, so all
+    # prior tests pass unchanged with no modification.
+    _rate_limiter = RateLimiter(
+        window_seconds=rl_cfg.window_seconds,
+        default_limit=rl_cfg.default_limit if rl_cfg.enabled else 0,
+        route_limits=rl_cfg.route_limits if rl_cfg.enabled else {},
+    )
+    app.state.rate_limiter = _rate_limiter
+
+    def _check_rate(tenant: str, route_key: str) -> None:
+        """Raise HTTP 429 if the per-tenant, per-route rate limit is exceeded."""
+        try:
+            _rate_limiter.check_and_increment(tenant, route_key)
+        except RateLimitExceeded as exc:
+            raise HTTPException(
+                status_code=429,
+                detail=f"rate limit exceeded; retry after {exc.retry_after}s",
+                headers={"Retry-After": str(exc.retry_after)},
+            )
 
     # The tenant-resolution dependency. When auth is disabled this is identical to reading
     # the X-Tenant-Id header. When auth is enabled it validates the Bearer JWT and derives
@@ -159,6 +189,7 @@ def create_app(service: RunService | None = None, auth_service: "AuthService | N
         When auth is disabled this endpoint still works — useful for pre-provisioning
         tokens before flipping auth on.
         """
+        _check_rate(req.tenant_id, "auth:token")
         try:
             token = auth_svc.issue_token(req.tenant_id, req.admin_secret)
         except AdminSecretMismatch:
@@ -172,6 +203,18 @@ def create_app(service: RunService | None = None, auth_service: "AuthService | N
     @app.post("/auth/revoke")
     def revoke_token(req: RevokeRequest) -> dict[str, Any]:
         """Revoke a JWT by its jti. The token will be rejected on all future requests."""
+        # Extract tenant_id from the token (unverified, for rate-limiting only).
+        # This keeps the endpoint unprotected (no auth required to revoke your own token).
+        import jwt as _jwt_mod
+        try:
+            _claims = _jwt_mod.decode(
+                req.token,
+                options={"verify_signature": False, "verify_exp": False},
+            )
+            _revoke_tenant = _claims.get("sub", "unknown")
+        except Exception:
+            _revoke_tenant = "unknown"
+        _check_rate(_revoke_tenant, "auth:revoke")
         try:
             jti = auth_svc.revoke_token(req.token)
         except (InvalidToken, RevokedToken) as exc:
@@ -229,6 +272,7 @@ def create_app(service: RunService | None = None, auth_service: "AuthService | N
     def create_run(
         req: CreateRunRequest, tenant_id: str = Depends(get_tenant)
     ) -> dict[str, Any]:
+        _check_rate(tenant_id, "runs:create")
         try:
             run = svc.create_run(req.intent, req.submitted_by, req.budget_minor, tenant_id)
         except UnknownTenant:
@@ -244,6 +288,7 @@ def create_app(service: RunService | None = None, auth_service: "AuthService | N
 
     @app.post("/runs/{run_id}/advance")
     def advance(run_id: str, tenant_id: str = Depends(get_tenant)) -> dict[str, Any]:
+        _check_rate(tenant_id, "runs:advance")
         try:
             return svc.advance(run_id, tenant_id).to_view()
         except (KeyError, CrossTenantAccess):
@@ -480,12 +525,13 @@ def create_app(service: RunService | None = None, auth_service: "AuthService | N
         return {"skills": svc.marketplace_catalog()}
 
     @app.post("/marketplace/skills", status_code=201)
-    def publish_skill(req: PublishSkillRequest) -> dict[str, Any]:
+    def publish_skill(req: PublishSkillRequest, tenant_id: str = Depends(get_tenant)) -> dict[str, Any]:
         """Publish a signed skill to the marketplace catalog.
 
         The Ed25519 signature must verify over the manifest's canonical bytes.
         Raises 400 if the signature is invalid.
         """
+        _check_rate(tenant_id, "marketplace:publish")
         try:
             return svc.marketplace_publish(req.manifest, req.signature)
         except Exception as exc:
@@ -503,6 +549,7 @@ def create_app(service: RunService | None = None, auth_service: "AuthService | N
         evaluates constitutional supremacy. Returns 404 if skill not in catalog,
         400 if any governance check fails.
         """
+        _check_rate(tenant_id, "marketplace:install")
         try:
             return svc.marketplace_install(
                 skill_id, req.version, tenant_id, req.permitted_scopes
