@@ -38,7 +38,7 @@ docs/                   Architecture and design docs
 
 ## Status
 
-All five MVP phases are implemented and tested end to end:
+All eight phases are implemented and tested end to end:
 
 1. Foundations — Rust core primitives, PyO3 bindings, Pydantic models, config, memory.
 2. Orchestration — intent compiler, governed engine, LangGraph human-in-the-loop graph.
@@ -48,11 +48,18 @@ All five MVP phases are implemented and tested end to end:
    then an egress-controlled sandbox with provenance, proxy gateway.
 5. Desktop UI + Control Plane — FastAPI control plane over a resumable run service, and a
    Tauri + React desktop app with four governance surfaces.
+6. Hardening & Scale — Multi-tenant workspace isolation, enterprise IdP onboarding,
+   analytics dashboard, adaptive autonomy, pluggable sandbox backends.
+7. Constitutional Governance & Compliance — Inviolable agent constitutions in Rust,
+   multi-agent collaboration with shared attributed ledgers, compliance attestation,
+   agent capability marketplace with signed manifests.
+8. Merkle Transparency Logs — RFC 6962/9162 inclusion and consistency proofs over the
+   evidence ledger, signed tree heads, compact audit trails for regulators.
 
 The full governed flow — intent → least-privilege plan → policy + lease authorization →
 sandboxed execution with provenance → human approval gates → tamper-evident, replayable
-evidence — is validated by the test suite and live over HTTP. See
-`docs/architecture/overview.md`.
+evidence with cryptographic transparency proofs — is validated by 63 Rust tests and
+125 Python tests, all green.
 
 ## Development
 

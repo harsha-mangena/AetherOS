@@ -270,10 +270,90 @@ five subsystems, the isolation boundary (negative tests), and the API. The React
 a workspace switcher (tenant-scoped `X-Tenant-Id` on every call) and an Analytics surface
 that renders the ledger-backed metrics with a live integrity badge.
 
-### Roadmap beyond Phase 6
+## Phase 7: Constitutional Governance & Compliance
 
-- **Phase 7 — Advanced Governance:** agent constitutions with runtime enforcement in Rust,
-  cross-agent collaboration with shared ledgers, compliance export modules (SOC2, GDPR),
-  a marketplace for reusable governed skills.
-- **Phase 8 — Platform & Ecosystem:** open-core plugin system, optional cloud-hosted
-  control plane (SaaS), SDKs for custom agent builders, MCP tool-provider partnerships.
+Phase 7 adds supreme, inviolable governance rules and cross-agent collaboration protocols
+within the multi-tenant, analytics-aware platform from Phase 6.
+
+- **Agent Constitutions.** Constitutional articles sit *above* policy in the governance
+  hierarchy. Where policy answers "is this action permitted by the current rule set?",
+  a constitution answers "does this action violate an inviolable principle that no policy
+  or autonomy tier may override?" Articles use glob matchers on scope/tool, cost floors,
+  and high-impact flags; verdicts are `Forbid` (absolute denial) or `RequireApproval`
+  (mandatory human gate). Constitution evaluation is in the Rust core (`constitution.rs`)
+  so it cannot be bypassed. Multi-layered governance: constitution (absolute) →
+  policy (configurable) → autonomy tier (contextual) → lease (scoped).
+
+- **Multi-Agent Collaboration (`multi_ledger.py`).** Agents can contribute entries to a
+  shared, attributed ledger. Each entry carries the agent's signature, so the ledger is
+  a verifiable history of who did what. Write access is gated by lease scope, so an agent
+  without the right scope cannot pollute a shared ledger even if it has the run_id.
+  Supports both exclusive (one writer) and collaborative (read-only others) topologies.
+
+- **Compliance Attestation (`compliance.py`).** A run ledger is auditable and replayable;
+  this module exports proofs that a run is compliant: every action was authorized by a
+  valid lease, no policy denials occurred, high-impact steps had human approval. The
+  attestation is deterministic and verifiable — an auditor (SOC2, ISO27001) can replay
+  the evidence and re-check the rules. Exports a structured compliance report with
+  findings and a pass/fail flag.
+
+- **Agent Capability Marketplace (`marketplace.py`).** Agents publish reusable skills
+  (workflows, tool adapters, reasoning patterns) as signed manifests. A manifest declares
+  the scopes it needs, is signed by its publisher, and can be installed by an agent only
+  if its lease already grants those scopes or if constitutional rules permit the requested
+  upgrade. This ties together the supply chain (artifacts are signed), the governance
+  layer (installs are gated), and the evidence ledger (every install is recorded).
+
+All Phase 7 work builds on the Rust core and Phase 6 tenancy/analytics: constitutions are
+evaluated in Rust, multi-ledgers are keyed by tenant, compliance is a projection over
+evidence, and marketplace installs emit evidence. The 47 Rust tests and full Python suite
+continue to pass, with new tests covering constitutional enforcement, multi-agent scenarios,
+compliance report determinism, and marketplace signature validation.
+
+## Phase 8: Merkle Transparency Logs
+
+Phase 8 adds cryptographic proofs of evidence integrity. While the hash-chained evidence
+ledger is tamper-evident to anyone holding the whole ledger, regulators, auditors, or peer
+AetherOS instances should be able to verify a *single fact* — "entry N is included in the
+log at tree root R" — without being shipped the entire ledger, and to verify it against a
+short, signed commitment.
+
+This is exactly what a Merkle transparency log (RFC 6962 / RFC 9162) provides.
+
+- **Merkle Tree over Evidence (`transparency.rs`).** The evidence ledger entries are
+  hashed as leaves (using domain-separated leaf hashing per RFC 6962), assembled into a
+  Merkle tree, and the root is signed as a `SignedTreeHead` (timestamp + tree size +
+  root hash + issuer signature). The tree is built incrementally so historical roots are
+  preserved, enabling consistency proofs: "this old tree is a prefix of the new tree."
+
+- **Inclusion Proofs.** Given an entry's index and the signed tree head, an auditor can
+  verify the entry is in the tree using the inclusion proof (the minimal set of sibling
+  hashes on the path from leaf to root). This is compact: O(log n) hashes for a ledger
+  with n entries.
+
+- **Consistency Proofs.** When a new signed tree head is published, any holder of the old
+  STH can ask "is this new tree consistent with the old one?" The consistency proof
+  provides the minimal set of hashes to verify that the new tree is the old tree with
+  new entries appended. This prevents the log from silently rewriting history.
+
+- **Research Net:** RFC 6962 "Certificate Transparency" (leaf/node domain separation,
+  Merkle Tree Hash algorithm, inclusion and consistency proofs); RFC 9162 "CT 2.0"
+  (signed tree heads as the auditable commitment); Crosby & Wallach "Efficient Data
+  Structures for Tamper-Evident Logging" (USENIX 2009).
+
+The transparency log is pure and side-effect-free (builds from leaf hashes, emits proofs,
+verifies them). It reuses the identity and canonical modules so the same Ed25519 key signs
+leases, constitutions, marketplace artifacts, and tree heads — a unified cryptographic
+anchor. All 63 Rust tests pass (including 9 new transparency tests). Next phases can
+integrate transparent logs with the evidence ledger API so auditors request inclusion
+proofs on demand.
+
+### Roadmap beyond Phase 8
+
+- **Phase 9 — Persistent Storage & Integration:** move run ledgers from in-memory to
+  SQLite/PostgreSQL, integrate transparent logs with the evidence API so auditors can
+  request compact proofs on demand, implement ledger compression while preserving
+  transparency.
+- **Phase 10 — Platform & Ecosystem:** open-core plugin system, optional cloud-hosted
+  control plane (SaaS), SDKs for custom agent builders, MCP tool-provider partnerships,
+  production hardening (rate limiting, telemetry, key rotation ceremonies).
