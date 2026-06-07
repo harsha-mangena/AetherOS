@@ -216,3 +216,64 @@ entry carrying a provenance id — exactly what the React UI drives.
 5. **UI + Demo (Weeks 8–10, done):** FastAPI control plane + resumable run service,
    Tauri + React desktop app with Intent Console, live Execution Canvas, Evidence
    Viewer, and Governance Admin; end-to-end Production Incident demo validated live.
+
+## Phase 6: Hardening & Scale (post-MVP)
+
+Phase 6 turns the validated MVP into a multi-tenant, enterprise-onboardable platform. The
+guiding principle is the same as the core thesis: every new capability is an *enforced*
+boundary or a *projection over evidence*, never advisory decoration, and nothing weakens
+the Rust-owned control plane.
+
+- **Multi-tenant workspace isolation (`tenancy.py`).** A `Tenant` is a hard isolation
+  boundary, not a partitioning convenience. Every run, ledger, policy lookup, and
+  analytics query is keyed by an immutable tenant id, and cross-tenant access is denied
+  *by construction*: the run service resolves a run only within its tenant's namespace, so
+  a run id from tenant A is indistinguishable from a non-existent id when queried as
+  tenant B. The API returns an identical 404 in both cases, so the boundary never leaks
+  existence. Proven by a negative-heavy suite (cross-tenant get/advance/resume/evidence
+  all denied).
+
+- **Enterprise identity / IdP-mapped onboarding (`identity_provider.py`).** Agents are
+  onboarded from an existing OIDC issuer (Okta, Azure AD, any provider) rather than via
+  ad-hoc credentials. The flow is verify-claims then map-claims then provision-agent, and
+  it is default-deny: a tampered token is rejected and claims matching no mapping rule are
+  refused. `IdentityProvider` is a protocol with a deterministic `MockOIDCProvider` for
+  hermetic tests; a real discovery/JWKS provider drops in behind the same seam. Every
+  onboarding emits evidence.
+
+- **Analytics (`analytics.py`).** Per-tenant usage, spend, autonomy, and policy-violation
+  metrics are a *pure projection over the evidence ledger* — never a separate mutable
+  store that could drift from the audit trail. Each metric reconciles with scanned ledger
+  entries, and the projection carries an integrity flag that is false if any of the
+  tenant's run ledgers fail to verify. Exposed at `GET /analytics`, tenant-scoped by header.
+
+- **Adaptive autonomy (`adaptive_autonomy.py`).** An `AutonomyAdvisor` reads an agent's
+  evidence-derived behaviour window and recommends promote/demote/hold. The Rust core
+  still *owns* tier state — the advisor can only advise; applying a recommendation routes
+  through the Rust-backed `AutonomyTracker`, so even a future ML scorer can never forge a
+  tier. The scorer is a swappable protocol (`AutonomyScorer`) with a deterministic,
+  explainable `HeuristicScorer` default and a documented seam for an ML model. Bad
+  behaviour drives demotion, shrinking blast radius — self-healing recorded as evidence.
+
+- **Expanded sandbox backends (`sandbox_backends.py`).** The Phase 4 sandbox wrapper
+  (timeout + egress + provenance) keeps its contract; Phase 6 factors out the *execution
+  strategy* behind an `ExecutionBackend` protocol. The default `InProcessBackend` is
+  explicit that it does not isolate (safety comes from the upstream policy/lease gate plus
+  timeout and egress). `WasmStubBackend` and `FirecrackerStubBackend` carry the honest
+  capability contract for stronger isolation but *refuse to execute* until a real runtime
+  is configured — a backend that claimed isolation it did not provide would be a
+  governance lie, so it can never be silently trusted. Backend selection is config-driven.
+
+All Phase 6 work is Python-layer policy and projection above the unchanged Rust core: the
+47 Rust tests and the full MVP Python suite continue to pass, with new tests covering the
+five subsystems, the isolation boundary (negative tests), and the API. The React UI gains
+a workspace switcher (tenant-scoped `X-Tenant-Id` on every call) and an Analytics surface
+that renders the ledger-backed metrics with a live integrity badge.
+
+### Roadmap beyond Phase 6
+
+- **Phase 7 — Advanced Governance:** agent constitutions with runtime enforcement in Rust,
+  cross-agent collaboration with shared ledgers, compliance export modules (SOC2, GDPR),
+  a marketplace for reusable governed skills.
+- **Phase 8 — Platform & Ecosystem:** open-core plugin system, optional cloud-hosted
+  control plane (SaaS), SDKs for custom agent builders, MCP tool-provider partnerships.

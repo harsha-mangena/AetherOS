@@ -45,6 +45,45 @@ from .sandbox import (
     build_local_sandbox,
 )
 from .tools import ToolRegistry, default_registry
+from .run_service import RunService, RunState, RunStatus
+from .tenancy import (
+    DEFAULT_TENANT_ID,
+    CrossTenantAccess,
+    Tenant,
+    TenantError,
+    TenantRegistry,
+    UnknownTenant,
+)
+from .identity_provider import (
+    ClaimMappingRule,
+    IdentityProvider,
+    MockOIDCProvider,
+    OnboardingDenied,
+    OnboardingResult,
+    OnboardingService,
+    TokenVerificationError,
+    VerifiedClaims,
+)
+from .analytics import TenantAnalytics, compute_tenant_analytics
+from .adaptive_autonomy import (
+    AutonomyAction,
+    AutonomyAdvisor,
+    AutonomyRecommendation,
+    AutonomyScorer,
+    BehaviorWindow,
+    HeuristicScorer,
+    window_from_analytics,
+)
+from .sandbox_backends import (
+    ExecutionBackend,
+    FirecrackerStubBackend,
+    InProcessBackend,
+    IsolationLevel,
+    SandboxBackendError,
+    WasmStubBackend,
+    available_backends,
+    build_backend,
+)
 
 __all__ = [
     # config / memory
@@ -95,6 +134,46 @@ __all__ = [
     "SandboxExecutionError",
     "ProvenanceRecord",
     "build_local_sandbox",
+    # control plane (Phase 5)
+    "RunService",
+    "RunState",
+    "RunStatus",
+    # multi-tenancy (Phase 6)
+    "Tenant",
+    "TenantRegistry",
+    "TenantError",
+    "UnknownTenant",
+    "CrossTenantAccess",
+    "DEFAULT_TENANT_ID",
+    # enterprise identity (Phase 6)
+    "IdentityProvider",
+    "MockOIDCProvider",
+    "VerifiedClaims",
+    "ClaimMappingRule",
+    "OnboardingService",
+    "OnboardingResult",
+    "OnboardingDenied",
+    "TokenVerificationError",
+    # analytics (Phase 6)
+    "TenantAnalytics",
+    "compute_tenant_analytics",
+    # adaptive autonomy (Phase 6)
+    "AutonomyAdvisor",
+    "AutonomyScorer",
+    "HeuristicScorer",
+    "AutonomyAction",
+    "AutonomyRecommendation",
+    "BehaviorWindow",
+    "window_from_analytics",
+    # sandbox backends (Phase 6)
+    "ExecutionBackend",
+    "InProcessBackend",
+    "WasmStubBackend",
+    "FirecrackerStubBackend",
+    "IsolationLevel",
+    "SandboxBackendError",
+    "build_backend",
+    "available_backends",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.6.0"

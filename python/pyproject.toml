@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aetheros-orchestrator"
-version = "0.5.0"
+version = "0.6.0"
 description = "AetherOS orchestration layer: intent compilation, governed task graphs, hybrid memory, MCP + sandbox, control-plane API"
 readme = "README.md"
 requires-python = ">=3.10"

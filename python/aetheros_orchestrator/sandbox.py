@@ -25,10 +25,13 @@ import json
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
 
 from .gateway import EgressDenied, ProxyGateway
 from .mcp_adapter import MCPAdapter
+
+if TYPE_CHECKING:
+    from .sandbox_backends import ExecutionBackend
 
 
 def _canonical_json(value: object) -> str:
@@ -89,18 +92,24 @@ class SandboxController(Protocol):
 class LocalSandbox:
     """In-process sandbox with a timeout guard, egress control, and provenance."""
 
-    backend_name = "local"
-
     def __init__(
         self,
         adapter: MCPAdapter,
         gateway: ProxyGateway,
         timeout_seconds: float = 10.0,
+        backend: "ExecutionBackend | None" = None,
     ) -> None:
+        from .sandbox_backends import InProcessBackend
+
         self._adapter = adapter
         self._gateway = gateway
         self._timeout = timeout_seconds
         self._pool = ThreadPoolExecutor(max_workers=4)
+        self._backend = backend or InProcessBackend()
+
+    @property
+    def backend_name(self) -> str:  # type: ignore[override]
+        return self._backend.name
 
     def execute(
         self, tool: str, arguments: dict[str, Any], destination: str | None = None
@@ -113,8 +122,8 @@ class LocalSandbox:
         except EgressDenied as exc:
             raise SandboxExecutionError(str(exc)) from exc
 
-        # Execute with a wall-clock timeout guard.
-        future = self._pool.submit(self._adapter.call_tool, tool, arguments)
+        # Execute with a wall-clock timeout guard, via the pluggable backend.
+        future = self._pool.submit(self._backend.run, self._adapter.call_tool, tool, arguments)
         try:
             output = future.result(timeout=self._timeout)
         except FuturesTimeout as exc:
@@ -153,6 +162,7 @@ def build_local_sandbox(config, adapter: MCPAdapter) -> tuple["LocalSandbox", di
     execution stack from config alone — zero hardcoding.
     """
     from .gateway import GatewayConfig, ProxyGateway
+    from .sandbox_backends import build_backend
 
     sb = config.sandbox
     gateway = ProxyGateway(
@@ -162,5 +172,8 @@ def build_local_sandbox(config, adapter: MCPAdapter) -> tuple["LocalSandbox", di
             deny_by_default=sb.gateway.deny_by_default,
         )
     )
-    sandbox = LocalSandbox(adapter, gateway, timeout_seconds=sb.timeout_seconds)
+    backend = build_backend(getattr(sb, "backend", "local"))
+    sandbox = LocalSandbox(
+        adapter, gateway, timeout_seconds=sb.timeout_seconds, backend=backend
+    )
     return sandbox, dict(sb.tool_destinations)

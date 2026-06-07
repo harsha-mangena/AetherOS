@@ -27,7 +27,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 try:
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, Header, HTTPException
     from fastapi.middleware.cors import CORSMiddleware
 except Exception as exc:  # pragma: no cover - import guard
     raise RuntimeError(
@@ -36,6 +36,12 @@ except Exception as exc:  # pragma: no cover - import guard
 
 from .config import load_config
 from .run_service import RunService
+from .tenancy import (
+    DEFAULT_TENANT_ID,
+    CrossTenantAccess,
+    TenantError,
+    UnknownTenant,
+)
 
 
 class CreateRunRequest(BaseModel):
@@ -48,6 +54,13 @@ class ResumeRequest(BaseModel):
     step_id: str
     approved: bool
     approver: str = Field("human:operator")
+
+
+class CreateTenantRequest(BaseModel):
+    display_name: str = Field(..., description="Human-readable workspace name.")
+    tenant_id: str | None = Field(None, description="Optional explicit slug id.")
+    max_budget_minor: int | None = Field(None, ge=0)
+    max_autonomy_tier: int | None = Field(None, ge=0)
 
 
 def create_app(service: RunService | None = None) -> "FastAPI":
@@ -91,43 +104,90 @@ def create_app(service: RunService | None = None) -> "FastAPI":
         }
 
     @app.get("/runs")
-    def list_runs() -> dict[str, Any]:
-        return {"runs": svc.list_runs()}
+    def list_runs(x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
+        try:
+            svc.tenants.get(x_tenant_id)
+        except UnknownTenant:
+            raise HTTPException(status_code=404, detail="unknown tenant")
+        return {"tenant_id": x_tenant_id, "runs": svc.list_runs(x_tenant_id)}
 
     @app.post("/runs")
-    def create_run(req: CreateRunRequest) -> dict[str, Any]:
-        run = svc.create_run(req.intent, req.submitted_by, req.budget_minor)
+    def create_run(
+        req: CreateRunRequest, x_tenant_id: str = Header(DEFAULT_TENANT_ID)
+    ) -> dict[str, Any]:
+        try:
+            run = svc.create_run(req.intent, req.submitted_by, req.budget_minor, x_tenant_id)
+        except UnknownTenant:
+            raise HTTPException(status_code=404, detail="unknown tenant")
         return run.to_view()
 
     @app.get("/runs/{run_id}")
-    def get_run(run_id: str) -> dict[str, Any]:
+    def get_run(run_id: str, x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
         try:
-            return svc.get(run_id).to_view()
-        except KeyError:
+            return svc.get(run_id, x_tenant_id).to_view()
+        except (KeyError, CrossTenantAccess):
             raise HTTPException(status_code=404, detail="unknown run")
 
     @app.post("/runs/{run_id}/advance")
-    def advance(run_id: str) -> dict[str, Any]:
+    def advance(run_id: str, x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
         try:
-            return svc.advance(run_id).to_view()
-        except KeyError:
+            return svc.advance(run_id, x_tenant_id).to_view()
+        except (KeyError, CrossTenantAccess):
             raise HTTPException(status_code=404, detail="unknown run")
 
     @app.post("/runs/{run_id}/resume")
-    def resume(run_id: str, req: ResumeRequest) -> dict[str, Any]:
+    def resume(
+        run_id: str, req: ResumeRequest, x_tenant_id: str = Header(DEFAULT_TENANT_ID)
+    ) -> dict[str, Any]:
         try:
-            return svc.resume(run_id, req.step_id, req.approved, req.approver).to_view()
-        except KeyError:
+            return svc.resume(
+                run_id, req.step_id, req.approved, req.approver, x_tenant_id
+            ).to_view()
+        except (KeyError, CrossTenantAccess):
             raise HTTPException(status_code=404, detail="unknown run")
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
 
     @app.get("/runs/{run_id}/evidence")
-    def evidence(run_id: str) -> dict[str, Any]:
+    def evidence(run_id: str, x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
         try:
-            return svc.evidence(run_id)
-        except KeyError:
+            return svc.evidence(run_id, x_tenant_id)
+        except (KeyError, CrossTenantAccess):
             raise HTTPException(status_code=404, detail="unknown run")
+
+    # ── analytics (per-tenant, projected from the evidence ledger) ────────────
+
+    @app.get("/analytics")
+    def analytics(x_tenant_id: str = Header(DEFAULT_TENANT_ID)) -> dict[str, Any]:
+        try:
+            return svc.analytics(x_tenant_id)
+        except UnknownTenant:
+            raise HTTPException(status_code=404, detail="unknown tenant")
+
+    # ── tenants (multi-tenant workspace isolation) ────────────────────────────
+    @app.get("/tenants")
+    def list_tenants() -> dict[str, Any]:
+        return {"tenants": [t.to_view() for t in svc.tenants.list()]}
+
+    @app.post("/tenants")
+    def create_tenant(req: CreateTenantRequest) -> dict[str, Any]:
+        try:
+            tenant = svc.tenants.create(
+                req.display_name,
+                tenant_id=req.tenant_id,
+                max_budget_minor=req.max_budget_minor,
+                max_autonomy_tier=req.max_autonomy_tier,
+            )
+        except TenantError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        return tenant.to_view()
+
+    @app.get("/tenants/{tenant_id}")
+    def get_tenant(tenant_id: str) -> dict[str, Any]:
+        try:
+            return svc.tenants.get(tenant_id).to_view()
+        except UnknownTenant:
+            raise HTTPException(status_code=404, detail="unknown tenant")
 
     return app
 

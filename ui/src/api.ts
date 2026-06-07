@@ -84,11 +84,51 @@ export interface PolicyView {
   rules: PolicyRule[];
 }
 
+// ── Phase 6: multi-tenancy + analytics ──────────────────────────────────────
+
+export interface TenantView {
+  tenant_id: string;
+  display_name: string;
+  max_budget_minor: number | null;
+  max_autonomy_tier: number | null;
+  created_at: string;
+}
+
+export interface AnalyticsView {
+  tenant_id: string;
+  runs: { total: number; completed: number; halted: number; completion_rate: number };
+  tools: { invocations: number; failures: number; by_tool: Record<string, number> };
+  governance: {
+    policy_violations: number;
+    approvals_granted: number;
+    approvals_denied: number;
+    approval_rate: number;
+    autonomy_promotions: number;
+  };
+  spend: { total_minor: number; by_tool: Record<string, number> };
+  integrity: { evidence_entries_scanned: number; all_ledgers_verified: boolean };
+}
+
 const BASE = "/api";
+
+// The active tenant is held module-side and sent as X-Tenant-Id on every scoped call,
+// so the same isolation boundary the backend enforces is reflected in the UI.
+let ACTIVE_TENANT = "default";
+
+export function setActiveTenant(tenantId: string): void {
+  ACTIVE_TENANT = tenantId;
+}
+
+export function getActiveTenant(): string {
+  return ACTIVE_TENANT;
+}
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Tenant-Id": ACTIVE_TENANT,
+    },
     ...init,
   });
   if (!res.ok) {
@@ -101,7 +141,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => req<{ status: string }>("/health"),
   policy: () => req<PolicyView>("/config/policy"),
-  listRuns: () => req<{ runs: RunView[] }>("/runs"),
+  listRuns: () => req<{ tenant_id?: string; runs: RunView[] }>("/runs"),
   createRun: (intent: string, budget_minor = 100000) =>
     req<RunView>("/runs", {
       method: "POST",
@@ -116,4 +156,12 @@ export const api = {
       body: JSON.stringify({ step_id, approved, approver }),
     }),
   evidence: (id: string) => req<EvidenceView>(`/runs/${id}/evidence`),
+  // Phase 6
+  listTenants: () => req<{ tenants: TenantView[] }>("/tenants"),
+  createTenant: (display_name: string) =>
+    req<TenantView>("/tenants", {
+      method: "POST",
+      body: JSON.stringify({ display_name }),
+    }),
+  analytics: () => req<AnalyticsView>("/analytics"),
 };

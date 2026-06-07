@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react";
-import { api, RunView } from "./api";
+import { api, RunView, getActiveTenant } from "./api";
 import { IntentConsole } from "./surfaces/IntentConsole";
 import { ExecutionCanvas } from "./surfaces/ExecutionCanvas";
 import { EvidenceViewer } from "./surfaces/EvidenceViewer";
 import { AdminSurface } from "./surfaces/AdminSurface";
+import { AnalyticsSurface } from "./surfaces/AnalyticsSurface";
+import { TenantSwitcher } from "./surfaces/TenantSwitcher";
 
-type Tab = "console" | "canvas" | "evidence" | "admin";
+type Tab = "console" | "canvas" | "evidence" | "admin" | "analytics";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("console");
   const [run, setRun] = useState<RunView | null>(null);
   const [online, setOnline] = useState<boolean | null>(null);
+  const [tenant, setTenant] = useState<string>(getActiveTenant());
 
   useEffect(() => {
     api
@@ -18,6 +21,12 @@ export default function App() {
       .then(() => setOnline(true))
       .catch(() => setOnline(false));
   }, []);
+
+  // Switching workspace clears the in-view run (it belongs to the previous tenant).
+  function onTenantChange(id: string) {
+    setTenant(id);
+    setRun(null);
+  }
 
   // When a run is created or advanced, jump to the canvas.
   function onRun(r: RunView) {
@@ -32,6 +41,7 @@ export default function App() {
           <h1>AetherOS</h1>
           <div className="sub">Trusted Execution Kernel</div>
         </div>
+        <TenantSwitcher active={tenant} onChange={onTenantChange} />
         <nav className="nav">
           <button className={tab === "console" ? "active" : ""} onClick={() => setTab("console")}>
             Intent Console
@@ -41,6 +51,9 @@ export default function App() {
           </button>
           <button className={tab === "evidence" ? "active" : ""} onClick={() => setTab("evidence")}>
             Evidence Ledger
+          </button>
+          <button className={tab === "analytics" ? "active" : ""} onClick={() => setTab("analytics")}>
+            Analytics
           </button>
           <button className={tab === "admin" ? "active" : ""} onClick={() => setTab("admin")}>
             Governance Admin
@@ -64,6 +77,7 @@ export default function App() {
         {tab === "console" && <IntentConsole onRun={onRun} />}
         {tab === "canvas" && <ExecutionCanvas run={run} setRun={setRun} />}
         {tab === "evidence" && <EvidenceViewer run={run} />}
+        {tab === "analytics" && <AnalyticsSurface tenantId={tenant} />}
         {tab === "admin" && <AdminSurface />}
       </main>
     </div>

@@ -38,6 +38,11 @@ from .intent_compiler import IntentCompiler
 from .mcp_adapter import MCPAdapter, default_incident_adapter
 from .models import ExecutionPlan, Intent, PlanStep, StepResult, StepStatus
 from .sandbox import SandboxController, SandboxExecutionError, build_local_sandbox
+from .tenancy import (
+    DEFAULT_TENANT_ID,
+    CrossTenantAccess,
+    TenantRegistry,
+)
 
 
 class RunStatus:
@@ -58,6 +63,7 @@ class RunState:
     ctx: GovernanceContext
     sandbox: SandboxController
     destinations: dict[str, str]
+    tenant_id: str = DEFAULT_TENANT_ID
     status: str = RunStatus.PLANNED
     cursor: int = 0  # index of the next step to process
     results: list[StepResult] = field(default_factory=list)
@@ -71,6 +77,7 @@ class RunState:
         """A JSON-serializable snapshot for the UI."""
         return {
             "run_id": self.run_id,
+            "tenant_id": self.tenant_id,
             "status": self.status,
             "intent": {
                 "text": self.intent.text,
@@ -129,6 +136,7 @@ class RunService:
         config: AetherConfig | None = None,
         adapter: MCPAdapter | None = None,
         earn_autonomy_to: int = 1,
+        registry: TenantRegistry | None = None,
     ) -> None:
         self._config = config or load_config()
         self._adapter = adapter or default_incident_adapter()
@@ -138,19 +146,52 @@ class RunService:
         # infra mutations are policy-allowed (still gated by human approval). Real
         # deployments would load persisted autonomy per agent.
         self._earn_autonomy_to = earn_autonomy_to
+        # Tenancy: a registry of isolation boundaries. The default tenant always exists
+        # so single-tenant callers (and the existing tests/demo) work unchanged.
+        self._tenants = registry or TenantRegistry()
+        self._tenants.ensure(DEFAULT_TENANT_ID, "Default Workspace")
+
+    # ── tenancy ──────────────────────────────────────────────────────────────
+
+    @property
+    def tenants(self) -> TenantRegistry:
+        return self._tenants
+
+    def _resolve_tenant(self, tenant_id: str | None) -> str:
+        """Validate a tenant id, creating the default on demand. Returns the id."""
+        tid = tenant_id or DEFAULT_TENANT_ID
+        # ensure() is idempotent; unknown non-default tenants must be created explicitly
+        # via the registry, so a typo can't silently spawn an isolated workspace.
+        if tid == DEFAULT_TENANT_ID:
+            self._tenants.ensure(DEFAULT_TENANT_ID, "Default Workspace")
+        else:
+            self._tenants.get(tid)  # raises UnknownTenant if it doesn't exist
+        return tid
 
     # ── lifecycle ───────────────────────────────────────────────────────────
 
     def create_run(
-        self, intent_text: str, submitted_by: str = "human:operator", budget_minor: int = 100_000
+        self,
+        intent_text: str,
+        submitted_by: str = "human:operator",
+        budget_minor: int = 100_000,
+        tenant_id: str | None = None,
     ) -> RunState:
+        tid = self._resolve_tenant(tenant_id)
+        tenant = self._tenants.get(tid)
+        # Per-tenant budget ceiling: a tenant can cap spend below the requested budget.
+        if tenant.max_budget_minor is not None:
+            budget_minor = min(budget_minor, tenant.max_budget_minor)
         intent = Intent(text=intent_text, submitted_by=submitted_by, budget_minor=budget_minor)
         ledger = EvidenceLedger()
         plan = IntentCompiler(self._config).compile(intent, ledger)
         scopes = [s.scope for s in plan.steps]
         ctx = GovernanceContext.for_run(self._config, intent, scopes, ledger=ledger)
-        # Seed earned autonomy for the demo agent.
-        for _ in range(self._earn_autonomy_to * self._config.autonomy.promotion_threshold):
+        # Seed earned autonomy for the demo agent, respecting any per-tenant tier ceiling.
+        target_tier = self._earn_autonomy_to
+        if tenant.max_autonomy_tier is not None:
+            target_tier = min(target_tier, tenant.max_autonomy_tier)
+        for _ in range(target_tier * self._config.autonomy.promotion_threshold):
             ctx.autonomy.record_success(ctx.agent.agent_id)
         sandbox, destinations = build_local_sandbox(self._config, self._adapter)
 
@@ -161,26 +202,41 @@ class RunService:
             ctx=ctx,
             sandbox=sandbox,
             destinations=destinations,
+            tenant_id=tid,
         )
         with self._lock:
             self._runs[run.run_id] = run
         return run
 
-    def get(self, run_id: str) -> RunState:
+    def get(self, run_id: str, tenant_id: str | None = None) -> RunState:
+        """Fetch a run, enforcing the tenant isolation boundary.
+
+        If tenant_id is given and does not match the run's owning tenant, raise
+        CrossTenantAccess — never return another tenant's run, and (at the API layer)
+        never even confirm that it exists.
+        """
         with self._lock:
             if run_id not in self._runs:
                 raise KeyError(f"unknown run: {run_id}")
-            return self._runs[run_id]
+            run = self._runs[run_id]
+        if tenant_id is not None and run.tenant_id != tenant_id:
+            raise CrossTenantAccess(
+                f"run {run_id} is not accessible from tenant {tenant_id}"
+            )
+        return run
 
-    def list_runs(self) -> list[dict[str, Any]]:
+    def list_runs(self, tenant_id: str | None = None) -> list[dict[str, Any]]:
         with self._lock:
-            return [r.to_view() for r in self._runs.values()]
+            runs = list(self._runs.values())
+        if tenant_id is not None:
+            runs = [r for r in runs if r.tenant_id == tenant_id]
+        return [r.to_view() for r in runs]
 
     # ── execution state machine ──────────────────────────────────────────────
 
-    def advance(self, run_id: str) -> RunState:
+    def advance(self, run_id: str, tenant_id: str | None = None) -> RunState:
         """Execute steps until the run completes, halts, or hits an approval gate."""
-        run = self.get(run_id)
+        run = self.get(run_id, tenant_id)
         if run.status in (RunStatus.COMPLETED, RunStatus.HALTED):
             return run
         run.status = RunStatus.RUNNING
@@ -200,9 +256,16 @@ class RunService:
 
         return self._finalize(run, completed=True)
 
-    def resume(self, run_id: str, step_id: str, approved: bool, approver: str) -> RunState:
+    def resume(
+        self,
+        run_id: str,
+        step_id: str,
+        approved: bool,
+        approver: str,
+        tenant_id: str | None = None,
+    ) -> RunState:
         """Apply a human approval decision to the pending gated step, then continue."""
-        run = self.get(run_id)
+        run = self.get(run_id, tenant_id)
         if run.status != RunStatus.AWAITING_APPROVAL or run.pending_step_id != step_id:
             raise ValueError(f"run {run_id} is not awaiting approval for {step_id}")
 
@@ -225,7 +288,7 @@ class RunService:
         if not self._execute_step(run, step):
             return run
         run.cursor += 1
-        return self.advance(run_id)
+        return self.advance(run_id, tenant_id)
 
     # ── internals ─────────────────────────────────────────────────────────────
 
@@ -292,10 +355,26 @@ class RunService:
             run.ctx.autonomy.record_success(run.ctx.agent.agent_id)
         return run
 
+    # ── analytics ──────────────────────────────────────────────────────────────
+
+    def analytics(self, tenant_id: str | None = None) -> dict[str, Any]:
+        """Per-tenant metrics as a pure projection over that tenant's run ledgers.
+
+        Isolation-preserving: only this tenant's runs are folded, and each contributes
+        its own evidence report. If the tenant is unknown, raises UnknownTenant.
+        """
+        from .analytics import compute_tenant_analytics
+
+        tid = self._resolve_tenant(tenant_id)
+        with self._lock:
+            run_ids = [rid for rid, r in self._runs.items() if r.tenant_id == tid]
+        reports = [self.evidence(rid, tid) for rid in run_ids]
+        return compute_tenant_analytics(tid, reports).to_view()
+
     # ── evidence ──────────────────────────────────────────────────────────────
 
-    def evidence(self, run_id: str) -> dict[str, Any]:
-        run = self.get(run_id)
+    def evidence(self, run_id: str, tenant_id: str | None = None) -> dict[str, Any]:
+        run = self.get(run_id, tenant_id)
         ledger = run.ctx.ledger
         return {
             "run_id": run_id,
