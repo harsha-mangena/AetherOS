@@ -180,7 +180,7 @@ def create_app(
         except Exception:
             pass  # best-effort drain on shutdown
 
-    app = FastAPI(title="AetherOS Control Plane API", version="0.9.0", lifespan=lifespan)
+    app = FastAPI(title="AetherOS Control Plane API", version="1.0.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],  # local desktop app; tighten for any networked deployment

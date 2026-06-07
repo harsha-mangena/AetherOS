@@ -38,7 +38,13 @@ jobs:
         run: |
           uv venv .venv
           . .venv/bin/activate
-          uv pip install maturin "pydantic>=2.7,<3" pyyaml "pytest>=8" "langgraph>=0.2" "mcp>=1.0" "fastapi>=0.110" "uvicorn>=0.27" "httpx>=0.27"
+          uv pip install maturin \
+            "pydantic>=2.7,<3" pyyaml "pytest>=8" \
+            "langgraph>=0.2" "mcp>=1.0" \
+            "fastapi>=0.110" "uvicorn>=0.27" "httpx>=0.27" \
+            "cryptography>=42" "PyJWT>=2.8" \
+            "opentelemetry-sdk>=1.24" "opentelemetry-exporter-prometheus>=0.45b0" \
+            "prometheus_client>=0.20"
       - name: Build native extension
         run: |
           . .venv/bin/activate
@@ -51,6 +57,10 @@ jobs:
         run: |
           . .venv/bin/activate
           python -m pytest python/tests/ bindings/aether-py/tests/ -q
+      - name: Check OpenAPI spec is up to date
+        run: |
+          . .venv/bin/activate
+          python scripts/generate_openapi.py --check
 
   ui:
     name: Desktop UI (type-check + build)

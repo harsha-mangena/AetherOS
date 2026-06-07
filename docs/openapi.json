@@ -1,0 +1,2326 @@
+{
+  "components": {
+    "schemas": {
+      "AdmitAgentRequest": {
+        "properties": {
+          "agent_id": {
+            "description": "The agent to admit.",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "lease": {
+            "additionalProperties": true,
+            "description": "CapabilityLease JSON (as from lease.to_dict()).",
+            "title": "Lease",
+            "type": "object"
+          }
+        },
+        "required": [
+          "agent_id",
+          "lease"
+        ],
+        "title": "AdmitAgentRequest",
+        "type": "object"
+      },
+      "ContributeRequest": {
+        "properties": {
+          "agent_id": {
+            "description": "The contributing agent id.",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "event_type": {
+            "description": "Semantic event label (e.g. 'agent.analysis').",
+            "title": "Event Type",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "description": "Arbitrary structured payload.",
+            "title": "Payload",
+            "type": "object"
+          }
+        },
+        "required": [
+          "agent_id",
+          "event_type"
+        ],
+        "title": "ContributeRequest",
+        "type": "object"
+      },
+      "CreateRunRequest": {
+        "properties": {
+          "budget_minor": {
+            "default": 100000,
+            "minimum": 0.0,
+            "title": "Budget Minor",
+            "type": "integer"
+          },
+          "intent": {
+            "description": "Natural-language intent / goal.",
+            "title": "Intent",
+            "type": "string"
+          },
+          "submitted_by": {
+            "default": "human:operator",
+            "title": "Submitted By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "intent"
+        ],
+        "title": "CreateRunRequest",
+        "type": "object"
+      },
+      "CreateTenantRequest": {
+        "properties": {
+          "display_name": {
+            "description": "Human-readable workspace name.",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "max_autonomy_tier": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Autonomy Tier"
+          },
+          "max_budget_minor": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Budget Minor"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional explicit slug id.",
+            "title": "Tenant Id"
+          }
+        },
+        "required": [
+          "display_name"
+        ],
+        "title": "CreateTenantRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "InstallSkillRequest": {
+        "properties": {
+          "permitted_scopes": {
+            "description": "Scopes the tenant delegates to this skill (least-privilege gate).",
+            "items": {
+              "type": "string"
+            },
+            "title": "Permitted Scopes",
+            "type": "array"
+          },
+          "version": {
+            "description": "Version of the skill to install.",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "InstallSkillRequest",
+        "type": "object"
+      },
+      "OpenCollaborationRequest": {
+        "properties": {
+          "collaboration_id": {
+            "description": "Unique identifier for the shared ledger.",
+            "title": "Collaboration Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "collaboration_id"
+        ],
+        "title": "OpenCollaborationRequest",
+        "type": "object"
+      },
+      "PublishSkillRequest": {
+        "properties": {
+          "manifest": {
+            "additionalProperties": true,
+            "description": "Skill manifest fields: skill_id, version, publisher_agent_id, publisher_public_key, required_scopes, declared_tools, description.",
+            "title": "Manifest",
+            "type": "object"
+          },
+          "signature": {
+            "description": "Ed25519 hex signature over canonical manifest bytes.",
+            "title": "Signature",
+            "type": "string"
+          }
+        },
+        "required": [
+          "manifest",
+          "signature"
+        ],
+        "title": "PublishSkillRequest",
+        "type": "object"
+      },
+      "ResumeRequest": {
+        "properties": {
+          "approved": {
+            "title": "Approved",
+            "type": "boolean"
+          },
+          "approver": {
+            "default": "human:operator",
+            "title": "Approver",
+            "type": "string"
+          },
+          "step_id": {
+            "title": "Step Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step_id",
+          "approved"
+        ],
+        "title": "ResumeRequest",
+        "type": "object"
+      },
+      "RevokeRequest": {
+        "properties": {
+          "token": {
+            "description": "The JWT to revoke (by its jti).",
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "RevokeRequest",
+        "type": "object"
+      },
+      "RotateKeyRequest": {
+        "properties": {
+          "overlap_ttl_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Overlap window in seconds. During this window the old key stays verifiable so pre-rotation tokens remain valid. Defaults to key_rotation.overlap_ttl_seconds from config (typically equal to auth.token_ttl_seconds).",
+            "title": "Overlap Ttl Seconds"
+          }
+        },
+        "title": "RotateKeyRequest",
+        "type": "object"
+      },
+      "TokenRequest": {
+        "properties": {
+          "admin_secret": {
+            "description": "Server admin secret (from auth.admin_secret config).",
+            "title": "Admin Secret",
+            "type": "string"
+          },
+          "tenant_id": {
+            "description": "The tenant for which to issue a JWT.",
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "admin_secret"
+        ],
+        "title": "TokenRequest",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "AetherOS Control Plane API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/admin/policy/deny-rate": {
+      "get": {
+        "description": "Policy denial statistics for the requesting tenant.\n\nCounts steps with status \"denied\" across all runs without replaying\nthe evidence ledger. Response includes total_steps, denied_steps,\ndeny_rate (0.0\u20131.0, rounded to 3dp), and a per-run breakdown.",
+        "operationId": "admin_deny_rate_admin_policy_deny_rate_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Admin Deny Rate Admin Policy Deny Rate Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Deny Rate"
+      }
+    },
+    "/admin/runs": {
+      "get": {
+        "description": "List all governed runs for the requesting tenant with summary fields.\n\nQuery params:\n  status \u2014 optional filter by run status string (e.g. \"completed\", \"halted\").\n\nResponse shape:\n  {\"tenant_id\": \"...\", \"total\": N, \"runs\": [{summary}, ...]}\n\nDoes not call analytics() \u2014 projection is O(runs), not O(evidence).",
+        "operationId": "admin_list_runs_admin_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Admin List Runs Admin Runs Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin List Runs"
+      }
+    },
+    "/admin/summary": {
+      "get": {
+        "description": "Combined service-level summary across all tenants (admin overview).\n\nAggregates total runs, active/completed/halted counts, total cost, and\nunique tenant count. Auth protection is inherited from get_tenant, so this\nrequires a valid token when auth is enabled.\n\nResponse shape:\n  {\"service\": \"aetheros-control-plane\", \"total_runs\": N, ...}",
+        "operationId": "admin_summary_admin_summary_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Admin Summary Admin Summary Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Summary"
+      }
+    },
+    "/admin/tenants/{target_tenant_id}/budget": {
+      "get": {
+        "description": "Budget summary for a specific tenant.\n\nThe requesting tenant must match target_tenant_id \u2014 cross-tenant access\nis forbidden (HTTP 403). Response includes total budget allocated, total\nspent, remaining, and run counts by status.",
+        "operationId": "admin_budget_admin_tenants__target_tenant_id__budget_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "target_tenant_id",
+            "required": true,
+            "schema": {
+              "title": "Target Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Admin Budget Admin Tenants  Target Tenant Id  Budget Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Budget"
+      }
+    },
+    "/analytics": {
+      "get": {
+        "operationId": "analytics_analytics_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Analytics Analytics Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Analytics"
+      }
+    },
+    "/audit/events": {
+      "get": {
+        "description": "Paginated, filterable audit event export from the evidence ledger (Phase 19).\n\nReturns a JSON page of normalised ``AuditEvent`` records, suitable for\nSIEM ingestion (Splunk, Datadog, Elastic, Azure Sentinel). Filters:\n  ``event_type`` \u2014 exact match on event type (e.g. ``tool.invoked``)\n  ``since``      \u2014 ISO-8601 or Unix epoch lower bound (inclusive)\n  ``until``      \u2014 ISO-8601 or Unix epoch upper bound (exclusive)\n  ``actor``      \u2014 exact match on actor id\n  ``offset``     \u2014 zero-based pagination offset\n  ``limit``      \u2014 page size (capped at audit.max_page_size in config)\n\nHTTP 403 when audit.enabled = False (default, backward-compatible).\nSchema follows OCSF v1.0 (CISA 2022) field conventions.",
+        "operationId": "audit_events_audit_events_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "event_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Actor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Audit Events Audit Events Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Audit Events"
+      }
+    },
+    "/audit/summary": {
+      "get": {
+        "description": "Lightweight audit event-count summary across all runs for a tenant (Phase 19).\n\nReturns event type counts, actor counts, and the audit window (earliest/latest\ntimestamps) without paying the cost of a full event export. Suitable for\nSIEM health checks and dashboard widgets.\n\nHTTP 403 when audit.enabled = False (default, backward-compatible).",
+        "operationId": "audit_summary_audit_summary_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Audit Summary Audit Summary Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Audit Summary"
+      }
+    },
+    "/auth/jwks": {
+      "get": {
+        "description": "Publish per-tenant Ed25519 public keys as an RFC 7517 JWK Set.\n\nVerify-only material \u2014 never contains private keys. A downstream verifier\nselects the right key by matching a token's ``kid`` header to a JWK ``kid``.\nUnder HS256 (the default) there are no asymmetric keys, so this returns an\nempty key set. Always unprotected: public keys are meant to be public.\n\nPhase 18: during a rotation overlap window, both ACTIVE and RETIRING keys\nappear in the JWKS so tokens issued before and after the rotation validate\nsimultaneously.",
+        "operationId": "jwks_auth_jwks_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Jwks Auth Jwks Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Jwks"
+      }
+    },
+    "/auth/keys/{tenant_id}": {
+      "get": {
+        "description": "Return the key registry state for a tenant (EdDSA only, Phase 18).\n\nLists all key versions (ACTIVE, RETIRING, EXPIRED) with their lifecycle\ntimestamps. Suitable for ops inspection and rotation audit trails.\n\nHTTP 400 if auth.algorithm is not EdDSA.\nHTTP 403 if key_rotation.enabled = False in config.",
+        "operationId": "get_key_info_auth_keys__tenant_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Key Info Auth Keys  Tenant Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Key Info"
+      }
+    },
+    "/auth/keys/{tenant_id}/retire": {
+      "delete": {
+        "description": "Emergency: immediately expire all RETIRING keys for a tenant (Phase 18).\n\nThis is a break-glass operation that invalidates all currently-retiring keys\nwithout waiting for the overlap window to expire. Tokens signed with the\nretired keys will be rejected immediately. The current ACTIVE key is unaffected.\n\nUse this when a key compromise is detected and immediate invalidation of all\npre-rotation tokens is required.\n\nHTTP 400 if auth.algorithm is not EdDSA.\nHTTP 403 if key_rotation.enabled = False in config.",
+        "operationId": "emergency_retire_keys_auth_keys__tenant_id__retire_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Emergency Retire Keys Auth Keys  Tenant Id  Retire Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Emergency Retire Keys"
+      }
+    },
+    "/auth/keys/{tenant_id}/rotate": {
+      "post": {
+        "description": "Rotate the Ed25519 signing key for a tenant (EdDSA only, Phase 18).\n\nAtomically generates a new Ed25519 keypair, moves the current ACTIVE key to\nRETIRING (verifiable but no longer signing), and stamps the new versioned kid\non all subsequent tokens for this tenant.\n\nReturns the new ``kid``, the old (retiring) ``kid``, and the overlap window\nduration so the caller can audit the rotation event.\n\nHTTP 400 if auth.algorithm is not EdDSA (key rotation is meaningless for HS256).\nHTTP 403 if key_rotation.enabled = False in config.",
+        "operationId": "rotate_key_auth_keys__tenant_id__rotate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rotate Key Auth Keys  Tenant Id  Rotate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rotate Key"
+      }
+    },
+    "/auth/revoke": {
+      "post": {
+        "description": "Revoke a JWT by its jti. The token will be rejected on all future requests.",
+        "operationId": "revoke_token_auth_revoke_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Revoke Token Auth Revoke Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Token"
+      }
+    },
+    "/auth/token": {
+      "post": {
+        "description": "Issue a signed JWT for a tenant.\n\nThe caller must supply the correct ``admin_secret`` (from config). On success,\nreturns ``{\"token\": \"<jwt>\", \"token_type\": \"bearer\", \"expires_in\": <seconds>}``.\nWhen auth is disabled this endpoint still works \u2014 useful for pre-provisioning\ntokens before flipping auth on.",
+        "operationId": "issue_token_auth_token_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Issue Token Auth Token Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Issue Token"
+      }
+    },
+    "/collaborations": {
+      "get": {
+        "description": "List all collaborations visible to the requesting tenant.",
+        "operationId": "list_collaborations_collaborations_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Collaborations Collaborations Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Collaborations"
+      },
+      "post": {
+        "description": "Open (or retrieve) a tenant-scoped shared ledger for multi-agent collaboration.",
+        "operationId": "open_collaboration_collaborations_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenCollaborationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Open Collaboration Collaborations Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Open Collaboration"
+      }
+    },
+    "/collaborations/{collaboration_id}": {
+      "get": {
+        "description": "Return a collaboration's full state and tamper-evident shared ledger.",
+        "operationId": "get_collaboration_collaborations__collaboration_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collaboration_id",
+            "required": true,
+            "schema": {
+              "title": "Collaboration Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Collaboration Collaborations  Collaboration Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Collaboration"
+      }
+    },
+    "/collaborations/{collaboration_id}/admit": {
+      "post": {
+        "description": "Admit an agent to a collaboration, verifying its capability lease signature.",
+        "operationId": "admit_agent_collaborations__collaboration_id__admit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collaboration_id",
+            "required": true,
+            "schema": {
+              "title": "Collaboration Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdmitAgentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Admit Agent Collaborations  Collaboration Id  Admit Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admit Agent"
+      }
+    },
+    "/collaborations/{collaboration_id}/contribute": {
+      "post": {
+        "description": "Append an attributed, tamper-evident entry to the collaboration's shared ledger.",
+        "operationId": "contribute_collaborations__collaboration_id__contribute_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collaboration_id",
+            "required": true,
+            "schema": {
+              "title": "Collaboration Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContributeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Contribute Collaborations  Collaboration Id  Contribute Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Contribute"
+      }
+    },
+    "/compliance": {
+      "get": {
+        "operationId": "compliance_compliance_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Compliance Compliance Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Compliance"
+      }
+    },
+    "/config/alerting": {
+      "get": {
+        "description": "Return the Prometheus alerting and recording rules for AetherOS.\n\nReturns the raw YAML text of config/alerting/rules.yml so operators\ncan pipe it directly into their Prometheus configuration:\n    curl http://localhost:8765/config/alerting > rules.yml\n\nThe YAML follows Prometheus rule group format (prometheus.io/docs 2023).\nRecording rules pre-compute the four golden signal rates (deny rate,\ncompletion rate, duration p95/p99, budget throughput). Alerting rules\nfire on thresholds derived from the OTEL instruments defined in Phase 20.",
+        "operationId": "alerting_rules_config_alerting_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Alerting Rules Config Alerting Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Alerting Rules"
+      }
+    },
+    "/config/constitution": {
+      "get": {
+        "operationId": "constitution_config_constitution_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Constitution Config Constitution Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Constitution"
+      }
+    },
+    "/config/policy": {
+      "get": {
+        "operationId": "policy_config_policy_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Policy Config Policy Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Policy"
+      }
+    },
+    "/health": {
+      "get": {
+        "description": "Legacy liveness probe \u2014 backward-compatible alias for /health/live.\n\nReturns status=\"ok\" to maintain backward compatibility with Phase 5-20\ntests that call GET /health and expect {\"status\": \"ok\", ...}.",
+        "operationId": "liveness_legacy_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Liveness Legacy Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Liveness Legacy",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/health/": {
+      "get": {
+        "description": "Legacy liveness probe \u2014 backward-compatible alias for /health/live.\n\nReturns status=\"ok\" to maintain backward compatibility with Phase 5-20\ntests that call GET /health and expect {\"status\": \"ok\", ...}.",
+        "operationId": "liveness_legacy_health__get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Liveness Legacy Health  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Liveness Legacy",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/health/deep": {
+      "get": {
+        "description": "Deep probe \u2014 full dependency + data-integrity check.",
+        "operationId": "deep_health_deep_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Deep",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/health/live": {
+      "get": {
+        "description": "Liveness probe \u2014 always returns 200 if the process is alive.",
+        "operationId": "liveness_health_live_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Liveness Health Live Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Liveness",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "description": "Readiness probe \u2014 checks critical dependencies.",
+        "operationId": "readiness_health_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Readiness",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/marketplace/catalog": {
+      "get": {
+        "description": "List all governed skills available in the marketplace catalog.",
+        "operationId": "marketplace_catalog_marketplace_catalog_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Marketplace Catalog Marketplace Catalog Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Marketplace Catalog"
+      }
+    },
+    "/marketplace/installed": {
+      "get": {
+        "description": "List all skills installed for the requesting tenant.",
+        "operationId": "marketplace_installed_marketplace_installed_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Marketplace Installed Marketplace Installed Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Marketplace Installed"
+      }
+    },
+    "/marketplace/skills": {
+      "post": {
+        "description": "Publish a signed skill to the marketplace catalog.\n\nThe Ed25519 signature must verify over the manifest's canonical bytes.\nRaises 400 if the signature is invalid.",
+        "operationId": "publish_skill_marketplace_skills_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishSkillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Publish Skill Marketplace Skills Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Skill"
+      }
+    },
+    "/marketplace/skills/{skill_id}/install": {
+      "post": {
+        "description": "Install a marketplace skill under the full governance gate for a tenant.\n\nVerifies Ed25519 origin, enforces least-privilege scope delegation, and\nevaluates constitutional supremacy. Returns 404 if skill not in catalog,\n400 if any governance check fails.",
+        "operationId": "install_skill_marketplace_skills__skill_id__install_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_id",
+            "required": true,
+            "schema": {
+              "title": "Skill Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallSkillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Install Skill Marketplace Skills  Skill Id  Install Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Install Skill"
+      }
+    },
+    "/metrics": {
+      "get": {
+        "description": "Prometheus text-format scrape endpoint (OpenMetrics v1.0.0).\n\nReturns all aetheros.* OTEL instruments plus standard Python process\nand GC metrics. Responds with Content-Type text/plain; version=0.0.4.\n\nHTTP 404 when prometheus.enabled = False (default).\nHTTP 503 when prometheus_client is not installed.",
+        "operationId": "metrics_metrics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Metrics"
+      }
+    },
+    "/runs": {
+      "get": {
+        "operationId": "list_runs_runs_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Runs Runs Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Runs"
+      },
+      "post": {
+        "operationId": "create_run_runs_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Run Runs Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Run"
+      }
+    },
+    "/runs/{run_id}": {
+      "delete": {
+        "description": "Remove a terminal (completed/halted) run from the service registry.\n\nReturns 204 No Content on success. Active runs must be cancelled first.",
+        "operationId": "delete_run_runs__run_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Run"
+      },
+      "get": {
+        "operationId": "get_run_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Run Runs  Run Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run"
+      }
+    },
+    "/runs/{run_id}/advance": {
+      "post": {
+        "operationId": "advance_runs__run_id__advance_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Advance Runs  Run Id  Advance Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Advance"
+      }
+    },
+    "/runs/{run_id}/cancel": {
+      "post": {
+        "description": "Cancel a non-terminal run. The cancellation is recorded in the evidence ledger.",
+        "operationId": "cancel_run_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Cancel Run Runs  Run Id  Cancel Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Run"
+      }
+    },
+    "/runs/{run_id}/evidence": {
+      "get": {
+        "operationId": "evidence_runs__run_id__evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Evidence Runs  Run Id  Evidence Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evidence"
+      }
+    },
+    "/runs/{run_id}/resume": {
+      "post": {
+        "operationId": "resume_runs__run_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Resume Runs  Run Id  Resume Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume"
+      }
+    },
+    "/runs/{run_id}/transparency": {
+      "get": {
+        "description": "Signed Tree Head over a run's evidence ledger; optional ?leaf=N inclusion proof.",
+        "operationId": "transparency_runs__run_id__transparency_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "leaf",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Leaf"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Transparency Runs  Run Id  Transparency Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Transparency"
+      }
+    },
+    "/runs/{run_id}/transparency/consistency": {
+      "get": {
+        "description": "Append-only consistency proof from ?first_size=M to the current ledger size.",
+        "operationId": "transparency_consistency_runs__run_id__transparency_consistency_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "first_size",
+            "required": true,
+            "schema": {
+              "title": "First Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Transparency Consistency Runs  Run Id  Transparency Consistency Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Transparency Consistency"
+      }
+    },
+    "/runs/{run_id}/transparency/cosigned": {
+      "get": {
+        "description": "Signed tree head plus independent witness cosignatures (split-view defense).\n\nReturns the STH, the gathered witness cosignatures, the panel size/threshold,\nand a `trustworthy` flag that is true once `threshold` distinct witnesses have\ncosigned the head along a consistent, append-only history.",
+        "operationId": "transparency_cosigned_runs__run_id__transparency_cosigned_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-tenant-id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "X-Tenant-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Transparency Cosigned Runs  Run Id  Transparency Cosigned Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Transparency Cosigned"
+      }
+    },
+    "/tenants": {
+      "get": {
+        "operationId": "list_tenants_tenants_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Tenants Tenants Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Tenants"
+      },
+      "post": {
+        "operationId": "create_tenant_tenants_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTenantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Tenant Tenants Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Tenant"
+      }
+    },
+    "/tenants/{tenant_id}": {
+      "get": {
+        "operationId": "get_tenant_by_id_tenants__tenant_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Tenant By Id Tenants  Tenant Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tenant By Id"
+      }
+    }
+  }
+}
