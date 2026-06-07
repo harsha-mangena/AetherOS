@@ -126,6 +126,19 @@ constitution:
       high_impact: true
       min_cost_minor: 5000
 
+storage:
+  # Ledger durability backend (Phase 10). Controls whether evidence ledgers are
+  # persisted to SQLite so they survive service restarts.
+  #
+  # "none"   — in-memory only (default, backward-compatible with all existing tests).
+  # "sqlite" — persist each run's canonical ledger JSON after every append.
+  #            Restores via EvidenceLedger.from_json(), which verifies the hash chain
+  #            in Rust before the ledger is returned to any caller.
+  backend: "none"
+  # Directory for SQLite databases. One file per tenant (safe-named). Created on
+  # first use. Has no effect when backend = "none".
+  db_dir: "./ledgers"
+
 sandbox:
   # Execution backend for governed tool calls. "local" = in-process sandbox with a
   # timeout guard + egress control + provenance. A native/E2B backend drops in here.

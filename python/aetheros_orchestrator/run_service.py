@@ -35,6 +35,7 @@ from aetheros import EvidenceLedger
 from .config import AetherConfig, load_config
 from .governance import GovernanceContext
 from .intent_compiler import IntentCompiler
+from .ledger_store import make_ledger
 from .mcp_adapter import MCPAdapter, default_incident_adapter
 from .models import ExecutionPlan, Intent, PlanStep, StepResult, StepStatus
 from .sandbox import SandboxController, SandboxExecutionError, build_local_sandbox
@@ -210,7 +211,11 @@ class RunService:
         if tenant.max_budget_minor is not None:
             budget_minor = min(budget_minor, tenant.max_budget_minor)
         intent = Intent(text=intent_text, submitted_by=submitted_by, budget_minor=budget_minor)
-        ledger = EvidenceLedger()
+        run_id = uuid.uuid4().hex
+        # Phase 10: use the config-driven ledger backend (NoStore by default → identical
+        # to prior in-memory behavior; SQLiteStore when storage.backend="sqlite").
+        scfg = self._config.storage
+        ledger = make_ledger(tid, run_id, backend=scfg.backend, db_dir=scfg.db_dir)
         plan = IntentCompiler(self._config).compile(intent, ledger)
         scopes = [s.scope for s in plan.steps]
         ctx = GovernanceContext.for_run(self._config, intent, scopes, ledger=ledger)
@@ -223,7 +228,7 @@ class RunService:
         sandbox, destinations = build_local_sandbox(self._config, self._adapter)
 
         run = RunState(
-            run_id=uuid.uuid4().hex,
+            run_id=run_id,
             intent=intent,
             plan=plan,
             ctx=ctx,

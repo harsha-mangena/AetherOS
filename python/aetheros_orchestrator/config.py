@@ -102,6 +102,23 @@ class TransparencyConfig(BaseModel):
     witness_threshold: int = 0
 
 
+class StorageConfig(BaseModel):
+    """Ledger durability backend (Phase 10).
+
+    Controls whether run evidence ledgers are persisted to SQLite so that they
+    survive service restarts. When ``backend = "none"`` (default) ledgers remain
+    in-memory only — the current MVP behavior, backward-compatible with all prior
+    tests. When ``backend = "sqlite"`` each run's canonical ledger JSON is written
+    to ``db_dir`` after every append and restored via ``EvidenceLedger.from_json``
+    on startup, which re-verifies the hash chain atomically.
+    """
+
+    # "none" | "sqlite"
+    backend: str = "none"
+    # Directory for SQLite databases (one file per tenant, keyed by tenant_id).
+    db_dir: str = "./ledgers"
+
+
 class GatewayConfigModel(BaseModel):
     allow_destinations: list[str] = Field(default_factory=list)
     external_tools: list[str] = Field(default_factory=list)
@@ -129,6 +146,7 @@ class AetherConfig(BaseModel):
     constitution: ConstitutionConfig = Field(default_factory=ConstitutionConfig)
     autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
     transparency: TransparencyConfig = Field(default_factory=TransparencyConfig)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
 
 
