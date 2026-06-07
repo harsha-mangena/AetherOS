@@ -183,7 +183,23 @@ auth:
   # Empty = plaintext PEM (default). Set AETHER__AUTH__KEYSTORE_PASSPHRASE in production.
   keystore_passphrase: ""
 
-# ── Audit Export (Phase 19) ────────────────────────────────────────────────
+# -- Tracing (Phase 20) --------------------------------------------------------
+# OpenTelemetry distributed tracing and metrics for the governed execution engine.
+# When enabled = false (default) all tracing is a no-op with zero overhead.
+# Standards: OpenTelemetry Spec v1.27.0 (CNCF 2024), Semantic Conventions v1.25.0.
+tracing:
+  # Master switch. false = no-op (backward-compatible default, all prior tests pass).
+  enabled: false
+  # Exporter backend: "none" | "console" | "otlp"
+  # "none"    = spans created then discarded (instrument code path, no export).
+  # "console" = print spans to stdout (dev/debug).
+  # "otlp"    = export via OTLP/gRPC to Jaeger, Grafana Tempo, Datadog Agent, etc.
+  exporter_type: "none"
+  # OTLP/gRPC endpoint (used only when exporter_type = "otlp").
+  # Standard OpenTelemetry Collector port. Override with AETHER__TRACING__OTLP_ENDPOINT.
+  otlp_endpoint: "http://localhost:4317"
+
+# -- Audit Export (Phase 19) ---------------------------------------------------
 # SIEM-ready structured event export from the evidence ledger.
 # Schema follows OCSF v1.0 (Open Cybersecurity Schema Framework, CISA 2022).
 # When enabled = false (default) the /audit/* endpoints return HTTP 403 and

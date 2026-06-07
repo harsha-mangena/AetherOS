@@ -208,10 +208,39 @@ class SandboxConfig(BaseModel):
     gateway: GatewayConfigModel = Field(default_factory=GatewayConfigModel)
 
 
+class TracingConfig(BaseModel):
+    """OpenTelemetry tracing and metrics configuration (Phase 20).
+
+    Controls distributed tracing for the governed execution engine. When
+    ``enabled = False`` (the default) all tracing calls are no-ops — zero
+    overhead, zero imports in callers, all 461 prior tests unaffected.
+
+    When ``enabled = True``, ``TracedGovernedEngine`` emits spans for each
+    governance stage (authorize, tool.invoke, ledger.append) with attributes
+    including tenant_id, run_id, step_id, tool, scope, cost_minor. A root span
+    ``aetheros.run.advance`` wraps each governed run.
+
+    Exporter types:
+      ``none``    — spans are created and immediately discarded (useful for
+                    testing instrumentation code paths without export overhead).
+      ``console`` — spans are printed to stdout (development / debugging).
+      ``otlp``    — spans exported via OTLP/gRPC to Jaeger, Grafana Tempo,
+                    Datadog Agent, or any OTEL-compatible backend.
+
+    Zero-hardcoding: override via AETHER__TRACING__* env vars.
+    """
+
+    # Master switch. False = no-op tracing (backward-compatible default).
+    enabled: bool = False
+    # Exporter backend. "none" | "console" | "otlp"
+    exporter_type: str = "none"
+    # OTLP/gRPC endpoint (only used when exporter_type = "otlp").
+    # Default: standard OTEL collector port on localhost.
+    otlp_endpoint: str = "http://localhost:4317"
+
+
 class AuditConfig(BaseModel):
     """Structured audit-log export configuration (Phase 19).
-
-    Controls the SIEM-ready event export endpoint. When ``enabled = False``
     (the default) the ``GET /audit/events`` and ``GET /audit/summary`` endpoints
     return HTTP 403 and behavior is identical to all prior phases.
 
@@ -312,6 +341,7 @@ class AetherConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+    tracing: TracingConfig = Field(default_factory=TracingConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
     key_rotation: KeyRotationConfig = Field(default_factory=KeyRotationConfig)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)

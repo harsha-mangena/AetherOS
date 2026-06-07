@@ -51,6 +51,7 @@ from .tenancy import (
 from .collaboration import CollaborationRegistry, CollaborationError, NotAMember, MembershipRevoked
 from .marketplace import SkillMarketplace, SignedSkill, SkillManifest, MarketplaceError
 from .constitution import ConstitutionEngine
+from . import tracing as _tracing
 
 
 class RunStatus:
@@ -482,23 +483,33 @@ class RunService:
         run = self.get(run_id, tenant_id)
         if run.status in (RunStatus.COMPLETED, RunStatus.HALTED):
             return run
-        run.status = RunStatus.RUNNING
 
-        while run.cursor < len(run.plan.steps):
-            step = run.plan.steps[run.cursor]
+        tracer = _tracing.get_tracer()
+        with tracer.start_as_current_span(
+            "aetheros.run.advance",
+            attributes={
+                "aetheros.tenant_id": run.tenant_id,
+                "aetheros.run_id": run_id,
+                "aetheros.plan_id": run.plan.plan_id,
+            },
+        ):
+            run.status = RunStatus.RUNNING
 
-            # Pause for human approval before processing a gated step.
-            if run.ctx.requires_approval(step):
-                run.status = RunStatus.AWAITING_APPROVAL
-                run.pending_step_id = step.step_id
-                self._persist_run(run)  # the paused gate must survive a restart
-                return run
+            while run.cursor < len(run.plan.steps):
+                step = run.plan.steps[run.cursor]
 
-            if not self._execute_step(run, step):
-                return run  # halted inside execution
-            run.cursor += 1
+                # Pause for human approval before processing a gated step.
+                if run.ctx.requires_approval(step):
+                    run.status = RunStatus.AWAITING_APPROVAL
+                    run.pending_step_id = step.step_id
+                    self._persist_run(run)  # the paused gate must survive a restart
+                    return run
 
-        return self._finalize(run, completed=True)
+                if not self._execute_step(run, step):
+                    return run  # halted inside execution
+                run.cursor += 1
+
+            return self._finalize(run, completed=True)
 
     def resume(
         self,
@@ -541,7 +552,19 @@ class RunService:
 
         Returns True on success (caller advances the cursor), False if the run halted.
         """
-        decision = run.ctx.authorize_step(step)
+        tracer = _tracing.get_tracer()
+        step_attrs = {
+            "aetheros.tenant_id": run.tenant_id,
+            "aetheros.run_id": run.run_id,
+            "aetheros.step_id": step.step_id,
+            "aetheros.tool": step.tool,
+            "aetheros.scope": step.scope,
+            "aetheros.high_impact": step.high_impact,
+        }
+
+        # Authorize.
+        with tracer.start_as_current_span("aetheros.governance.authorize", attributes=step_attrs):
+            decision = run.ctx.authorize_step(step)
         if not decision:
             run.results.append(
                 StepResult(step_id=step.step_id, status=StepStatus.DENIED, detail=decision.reason)
@@ -550,11 +573,13 @@ class RunService:
             self._finalize(run, completed=False)
             return False
 
+        # Execute.
         try:
-            destination = step.arguments.get("destination") or run.destinations.get(step.tool)
-            sb_result = run.sandbox.execute(step.tool, step.arguments, destination)
-            output = sb_result.output
-            provenance_id = sb_result.provenance.record_id
+            with tracer.start_as_current_span("aetheros.tool.invoke", attributes=step_attrs):
+                destination = step.arguments.get("destination") or run.destinations.get(step.tool)
+                sb_result = run.sandbox.execute(step.tool, step.arguments, destination)
+                output = sb_result.output
+                provenance_id = sb_result.provenance.record_id
         except (SandboxExecutionError, Exception) as exc:
             run.results.append(
                 StepResult(step_id=step.step_id, status=StepStatus.FAILED, detail=str(exc))
@@ -568,8 +593,11 @@ class RunService:
             self._finalize(run, completed=False)
             return False
 
-        cost = step.estimated_cost_minor
-        seq = run.ctx.charge_and_record(step, cost, output, provenance_id=provenance_id)
+        # Charge and record.
+        with tracer.start_as_current_span("aetheros.ledger.append", attributes=step_attrs):
+            cost = step.estimated_cost_minor
+            seq = run.ctx.charge_and_record(step, cost, output, provenance_id=provenance_id)
+
         run.total_cost_minor += cost
         run.results.append(
             StepResult(
