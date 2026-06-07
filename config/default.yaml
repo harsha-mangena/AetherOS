@@ -183,6 +183,19 @@ auth:
   # Empty = plaintext PEM (default). Set AETHER__AUTH__KEYSTORE_PASSPHRASE in production.
   keystore_passphrase: ""
 
+# ── Audit Export (Phase 19) ────────────────────────────────────────────────
+# SIEM-ready structured event export from the evidence ledger.
+# Schema follows OCSF v1.0 (Open Cybersecurity Schema Framework, CISA 2022).
+# When enabled = false (default) the /audit/* endpoints return HTTP 403 and
+# behavior is identical to all prior phases.
+# Set enabled: true and point your SIEM's HTTP input at GET /audit/events.
+audit:
+  # Master switch. false = no audit export endpoints (backward-compatible default).
+  enabled: false
+  # Maximum events per page. Requests for more are silently capped server-side.
+  # In production, set this to match your SIEM batch size (Splunk default: 1000).
+  max_page_size: 1000
+
 # ── Key Rotation (Phase 18) ────────────────────────────────────────────────
 # Cryptoperiod management for per-tenant Ed25519 signing keys.
 # Implements NIST SP 800-57 Part 1 Rev 5 §5.3 / §5.3.5: ACTIVE → RETIRING → EXPIRED.

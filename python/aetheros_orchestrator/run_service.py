@@ -1011,3 +1011,60 @@ class RunService:
             "compliant": compliant,
             "reports": reports,
         }
+
+    def audit_runs(self, tenant_id: str | None = None) -> list[tuple[str, str, Any]]:
+        """Return [(run_id, tenant_id, ledger), ...] for all runs owned by this tenant.
+
+        Helper for both audit_events() and audit_summary() — centralises the
+        per-tenant run lookup so both endpoints share one consistent data source.
+        Isolation-preserving: only this tenant's runs are returned.
+        """
+        tid = self._resolve_tenant(tenant_id)
+        with self._lock:
+            return [
+                (rid, tid, r.ctx.ledger)
+                for rid, r in self._runs.items()
+                if r.tenant_id == tid
+            ]
+
+    def audit_events(
+        self,
+        tenant_id: str | None = None,
+        event_type: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        actor: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+        max_limit: int = 1000,
+    ):
+        """Return a paginated, filtered AuditPage from all runs for this tenant.
+
+        Delegates to AuditExporter.export() with the full set of runs belonging
+        to the tenant. Returns an AuditPage dataclass (serialisable via .to_dict()).
+        """
+        from .audit_exporter import AuditExporter
+
+        runs = self.audit_runs(tenant_id)
+        exporter = AuditExporter()
+        return exporter.export(
+            runs,
+            event_type=event_type,
+            since=since,
+            until=until,
+            actor=actor,
+            offset=offset,
+            limit=limit,
+            max_limit=max_limit,
+        )
+
+    def audit_summary(self, tenant_id: str | None = None) -> dict:
+        """Return an event-count summary across all runs for this tenant.
+
+        Lighter than a full event export — useful for dashboard widgets and
+        SIEM health checks. Delegates to AuditExporter.summary().
+        """
+        from .audit_exporter import AuditExporter
+
+        runs = self.audit_runs(tenant_id)
+        return AuditExporter.summary(runs)

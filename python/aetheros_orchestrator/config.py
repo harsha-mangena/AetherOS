@@ -208,10 +208,32 @@ class SandboxConfig(BaseModel):
     gateway: GatewayConfigModel = Field(default_factory=GatewayConfigModel)
 
 
+class AuditConfig(BaseModel):
+    """Structured audit-log export configuration (Phase 19).
+
+    Controls the SIEM-ready event export endpoint. When ``enabled = False``
+    (the default) the ``GET /audit/events`` and ``GET /audit/summary`` endpoints
+    return HTTP 403 and behavior is identical to all prior phases.
+
+    When ``enabled = True`` the endpoints expose paginated, filterable audit
+    events derived from the evidence ledger — suitable for ingestion by Splunk,
+    Datadog, Elastic, Azure Sentinel, or any NDJSON-capable log aggregator.
+
+    Schema follows OCSF (Open Cybersecurity Schema Framework v1.0, CISA 2022)
+    field conventions: ``time_iso``, ``event_type``, ``actor``, ``tenant_id``,
+    ``run_id``, ``seq``, ``entry_hash``, ``prev_hash``, ``payload``.
+
+    Zero-hardcoding: override via AETHER__AUDIT__* env vars.
+    """
+
+    # Master switch. False = no audit export endpoints (backward-compatible default).
+    enabled: bool = False
+    # Maximum events per page. Requests asking for more are silently capped.
+    max_page_size: int = 1000
+
+
 class KeyRotationConfig(BaseModel):
     """Key rotation configuration (Phase 18).
-
-    Controls the cryptoperiod management lifecycle for per-tenant Ed25519 signing
     keys. When ``enabled = False`` (the default) no rotation endpoints are exposed
     and behavior is identical to Phase 14/15/16. When ``enabled = True`` the
     POST /auth/keys/{tenant_id}/rotate endpoint is available to operators.
@@ -290,6 +312,7 @@ class AetherConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+    audit: AuditConfig = Field(default_factory=AuditConfig)
     key_rotation: KeyRotationConfig = Field(default_factory=KeyRotationConfig)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
 

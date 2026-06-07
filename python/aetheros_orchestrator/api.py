@@ -53,7 +53,7 @@ except Exception as exc:  # pragma: no cover - import guard
         "FastAPI is required for the API layer. Install with: pip install 'fastapi' 'uvicorn'"
     ) from exc
 
-from .config import load_config
+from .config import load_config, AuditConfig
 from .run_service import RunService
 from .tenancy import (
     DEFAULT_TENANT_ID,
@@ -142,7 +142,11 @@ class RevokeRequest(BaseModel):
     token: str = Field(..., description="The JWT to revoke (by its jti).")
 
 
-def create_app(service: RunService | None = None, auth_service: "AuthService | None" = None) -> "FastAPI":
+def create_app(
+    service: RunService | None = None,
+    auth_service: "AuthService | None" = None,
+    audit_config: "AuditConfig | None" = None,
+) -> "FastAPI":
     """Build the FastAPI app. A custom RunService and AuthService can be injected for tests."""
     app = FastAPI(title="AetherOS Control Plane API", version="0.9.0")
     app.add_middleware(
@@ -160,11 +164,13 @@ def create_app(service: RunService | None = None, auth_service: "AuthService | N
         auth_svc = AuthService(cfg.auth)
         rl_cfg = cfg.rate_limit
         kr_cfg = cfg.key_rotation
+        audit_cfg = audit_config if audit_config is not None else cfg.audit
     else:
         auth_svc = auth_service
         cfg = load_config()
         rl_cfg = cfg.rate_limit
         kr_cfg = cfg.key_rotation
+        audit_cfg = audit_config if audit_config is not None else cfg.audit
     app.state.auth_service = auth_svc
 
     # Phase 17: per-tenant, per-route sliding-window rate limiter.
@@ -494,6 +500,72 @@ def create_app(service: RunService | None = None, auth_service: "AuthService | N
     def compliance(tenant_id: str = Depends(get_tenant)) -> dict[str, Any]:
         try:
             return svc.compliance(tenant_id)
+        except UnknownTenant:
+            raise HTTPException(status_code=404, detail="unknown tenant")
+
+    # ── audit export (Phase 19: SIEM-ready event-level export) ───────────────
+
+    @app.get("/audit/events")
+    def audit_events(
+        tenant_id: str = Depends(get_tenant),
+        event_type: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        actor: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Paginated, filterable audit event export from the evidence ledger (Phase 19).
+
+        Returns a JSON page of normalised ``AuditEvent`` records, suitable for
+        SIEM ingestion (Splunk, Datadog, Elastic, Azure Sentinel). Filters:
+          ``event_type`` — exact match on event type (e.g. ``tool.invoked``)
+          ``since``      — ISO-8601 or Unix epoch lower bound (inclusive)
+          ``until``      — ISO-8601 or Unix epoch upper bound (exclusive)
+          ``actor``      — exact match on actor id
+          ``offset``     — zero-based pagination offset
+          ``limit``      — page size (capped at audit.max_page_size in config)
+
+        HTTP 403 when audit.enabled = False (default, backward-compatible).
+        Schema follows OCSF v1.0 (CISA 2022) field conventions.
+        """
+        if not audit_cfg.enabled:
+            raise HTTPException(
+                status_code=403,
+                detail="audit export is disabled; set audit.enabled = true in config",
+            )
+        try:
+            page = svc.audit_events(
+                tenant_id=tenant_id,
+                event_type=event_type,
+                since=since,
+                until=until,
+                actor=actor,
+                offset=offset,
+                limit=limit,
+                max_limit=audit_cfg.max_page_size,
+            )
+        except UnknownTenant:
+            raise HTTPException(status_code=404, detail="unknown tenant")
+        return page.to_dict()
+
+    @app.get("/audit/summary")
+    def audit_summary(tenant_id: str = Depends(get_tenant)) -> dict[str, Any]:
+        """Lightweight audit event-count summary across all runs for a tenant (Phase 19).
+
+        Returns event type counts, actor counts, and the audit window (earliest/latest
+        timestamps) without paying the cost of a full event export. Suitable for
+        SIEM health checks and dashboard widgets.
+
+        HTTP 403 when audit.enabled = False (default, backward-compatible).
+        """
+        if not audit_cfg.enabled:
+            raise HTTPException(
+                status_code=403,
+                detail="audit export is disabled; set audit.enabled = true in config",
+            )
+        try:
+            return svc.audit_summary(tenant_id)
         except UnknownTenant:
             raise HTTPException(status_code=404, detail="unknown tenant")
 
