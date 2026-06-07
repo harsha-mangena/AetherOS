@@ -169,6 +169,12 @@ class AuthConfig(BaseModel):
     # tokens stay verifiable across restarts. Empty string = ephemeral in-memory
     # keystore (keys regenerated each process start — test/dev only).
     token_keystore_dir: str = ""
+    # Directory for the durable JWT revocation store (Phase 15). When set, revoked
+    # token IDs (jti) are persisted to SQLite with their expiry, so a revoked token
+    # stays revoked across a restart and the denylist self-prunes once entries pass
+    # their own exp. Empty string = in-memory revocation only (lost on restart —
+    # identical to Phase 12/14 behaviour, the default).
+    revocation_store_dir: str = ""
 
 
 class GatewayConfigModel(BaseModel):

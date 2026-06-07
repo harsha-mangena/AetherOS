@@ -13,7 +13,7 @@ Design (atom of thoughts):
      is derived from the validated token claims. A forged or missing header is irrelevant.
 
 Chain of thoughts:
-  AuthConfig (config.py) → TokenStore (in-memory, thread-safe, revocation set) →
+  AuthConfig (config.py) → RevocationStore (in-memory default or durable SQLite) →
   issue_token (HS256 JWT, jti=uuid4) → validate_token (decode + revocation check) →
   FastAPI Depends(get_tenant_id) → api.py protected routes.
 
@@ -52,6 +52,7 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 from .config import AuthConfig
+from .revocation_store import RevocationStore, make_revocation_store
 from .token_keystore import TenantKeyStore
 
 if TYPE_CHECKING:
@@ -83,44 +84,23 @@ class UnknownTenantKey(AuthError):
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
-class TokenStore:
-    """Thread-safe in-memory store for revoked JWT IDs (jti).
-
-    A revoked token is one that was explicitly invalidated before its natural
-    expiry — for example after a tenant rotation or a detected compromise.
-    Revocation is stored as a set of ``jti`` strings. Tokens that were never
-    issued are silently accepted by this store (revocation is an opt-in deny,
-    not an allow-list); the cryptographic signature check is the real gate.
-
-    Limitation: the revocation set lives in memory and is lost on restart.
-    Phase 13 can persist it to SQLite alongside the ledger store.
-    """
-
-    def __init__(self) -> None:
-        self._revoked: set[str] = set()
-        self._lock = threading.Lock()
-
-    def revoke(self, jti: str) -> None:
-        """Mark a token ID as revoked. Idempotent."""
-        with self._lock:
-            self._revoked.add(jti)
-
-    def is_revoked(self, jti: str) -> bool:
-        with self._lock:
-            return jti in self._revoked
-
-
 class AuthService:
     """Encapsulates token issuance and validation for the control-plane API.
 
     Constructed once from the server's ``AuthConfig`` and reused across requests.
-    The ``TokenStore`` is owned by this service and survives across token operations
+    The ``RevocationStore`` is owned by this service and survives across token operations
     within a single process lifetime.
     """
 
     def __init__(self, config: AuthConfig) -> None:
         self._config = config
-        self._store = TokenStore()
+        # Revocation deny-list. Durable (SQLite) when auth.revocation_store_dir is
+        # set, else in-memory (default — identical to Phase 12/14). The store is the
+        # single choke point for "is this token killed early?", shared by both the
+        # HS256 and EdDSA validation paths.
+        self._store: RevocationStore = make_revocation_store(
+            getattr(config, "revocation_store_dir", "") or ""
+        )
         # Per-tenant Ed25519 keystore — only materialised on the EdDSA path, but
         # constructed eagerly so issue/validate share one instance. For HS256 it is
         # never touched (no keys are generated), so HS256 deployments incur no
@@ -285,8 +265,12 @@ class AuthService:
         """Revoke a token by its jti, returning the revoked jti string.
 
         Does a lightweight decode without signature verification (the token may be
-        expired, and revocation should still work) to extract the jti, then adds it
-        to the revocation set. Works for both HS256 and EdDSA tokens.
+        expired, and revocation should still work) to extract the jti and, when
+        present, the ``exp`` claim. Both are handed to the revocation store: the jti
+        is the deny-list key, and ``exp`` lets a durable store self-prune the entry
+        once the token would have expired on its own. A token whose ``exp`` cannot be
+        read is revoked with no expiry (kept indefinitely — fail toward over-revoking).
+        Works for both HS256 and EdDSA tokens.
         """
         try:
             claims: dict = _jwt.decode(
@@ -300,7 +284,9 @@ class AuthService:
         except _jwt.InvalidTokenError as exc:
             raise InvalidToken(f"cannot revoke malformed token: {exc}") from exc
         jti = claims["jti"]
-        self._store.revoke(jti)
+        exp = claims.get("exp")
+        expires_at = int(exp) if isinstance(exp, (int, float)) else None
+        self._store.revoke(jti, expires_at)
         return jti
 
     # ── FastAPI dependency ────────────────────────────────────────────────────

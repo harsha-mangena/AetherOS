@@ -172,6 +172,10 @@ auth:
   # Per-tenant Ed25519 keystore directory (EdDSA only). Empty = ephemeral in-memory
   # keys (dev/test); set a path for keys that survive restarts.
   token_keystore_dir: ""
+  # Durable JWT revocation store directory (Phase 15). Empty = in-memory only
+  # (revocations lost on restart, the default). Set a path so revoked tokens stay
+  # revoked across restarts; the denylist self-prunes entries past their own expiry.
+  revocation_store_dir: ""
 
 sandbox:
   # Execution backend for governed tool calls. "local" = in-process sandbox with a
