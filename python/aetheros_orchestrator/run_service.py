@@ -52,6 +52,7 @@ from .collaboration import CollaborationRegistry, CollaborationError, NotAMember
 from .marketplace import SkillMarketplace, SignedSkill, SkillManifest, MarketplaceError
 from .constitution import ConstitutionEngine
 from . import tracing as _tracing
+from . import trace_log as _trace_log
 
 
 class RunStatus:
@@ -594,9 +595,13 @@ class RunService:
             return False
 
         # Charge and record.
+        trace_ctx = _trace_log.get_trace_context()
         with tracer.start_as_current_span("aetheros.ledger.append", attributes=step_attrs):
             cost = step.estimated_cost_minor
-            seq = run.ctx.charge_and_record(step, cost, output, provenance_id=provenance_id)
+            extra: dict | None = None
+            if trace_ctx.get("trace_id"):
+                extra = {"_trace_id": trace_ctx["trace_id"], "_span_id": trace_ctx["span_id"]}
+            seq = run.ctx.charge_and_record(step, cost, output, provenance_id=provenance_id, extra_payload=extra)
 
         run.total_cost_minor += cost
         run.results.append(

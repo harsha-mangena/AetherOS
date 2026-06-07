@@ -55,6 +55,7 @@ except Exception as exc:  # pragma: no cover - import guard
 
 from .config import load_config, AuditConfig
 from .run_service import RunService
+from .health import make_health_router
 from .tenancy import (
     DEFAULT_TENANT_ID,
     CrossTenantAccess,
@@ -172,6 +173,10 @@ def create_app(
         kr_cfg = cfg.key_rotation
         audit_cfg = audit_config if audit_config is not None else cfg.audit
     app.state.auth_service = auth_svc
+
+    # Phase 21: health router (/health/live, /health/ready, /health/deep).
+    # Must be added before route definitions that could shadow /health/*.
+    app.include_router(make_health_router(cfg))
 
     # Phase 17: per-tenant, per-route sliding-window rate limiter.
     # When rate_limit.enabled = False (default) the limiter never raises, so all
@@ -354,10 +359,6 @@ def create_app(
             "tenant_id": tenant_id,
             "keys_expired": count,
         }
-
-    @app.get("/health")
-    def health() -> dict[str, Any]:
-        return {"status": "ok", "service": "aetheros-control-plane"}
 
     @app.get("/config/policy")
     def policy() -> dict[str, Any]:

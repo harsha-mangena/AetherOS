@@ -270,3 +270,16 @@ rate_limit:
   #   marketplace:publish: 5   # max 5 skill publishes per tenant per minute
   #   marketplace:install: 10  # max 10 skill installs per tenant per minute
   route_limits: {}
+
+# ── Health endpoints (Phase 21) ───────────────────────────────────────────────
+# Kubernetes-style liveness / readiness / deep probes following the IETF
+# Health Check Response Format (draft-inadarei-api-health-check-06, 2022).
+# GET /health/live   — always 200 if process is alive
+# GET /health/ready  — 200/503 based on critical dependency reachability
+# GET /health/deep   — 200/503 based on full dependency + data integrity checks
+health:
+  # Master switch. When enabled = true, /health/ready and /health/deep perform
+  # real dependency checks. When false, they return pass with no detail.
+  enabled: true
+  # Whether /health/deep performs ledger chain integrity verification.
+  deep_checks: true

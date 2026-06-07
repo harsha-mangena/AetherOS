@@ -288,13 +288,18 @@ class GovernanceContext:
         )
 
     def charge_and_record(
-        self, step: PlanStep, actual_cost_minor: int, output_summary, provenance_id: str | None = None
+        self, step: PlanStep, actual_cost_minor: int, output_summary, provenance_id: str | None = None, extra_payload: dict | None = None
     ) -> int:
         """Charge the Rust-tracked budget for a successful step and record evidence.
 
         Returns the evidence sequence number of the tool.invoked entry. When the step
         executed inside a sandbox, `provenance_id` ties the ledger entry to the
         verifiable sandbox provenance record (Phase 4).
+
+        When `extra_payload` is supplied (Phase 21), its key-value pairs are merged
+        into the ledger entry payload. This is used to inject trace context
+        (_trace_id, _span_id) for log-trace correlation without altering governance
+        semantics.
         """
         assert self.lease is not None
         self.lease.record_spend(actual_cost_minor)
@@ -308,6 +313,8 @@ class GovernanceContext:
         }
         if provenance_id is not None:
             payload["provenance_id"] = provenance_id
+        if extra_payload:
+            payload.update(extra_payload)
         seq, _hash = self.ledger.append(
             self.agent.agent_id,
             "tool.invoked",

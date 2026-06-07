@@ -208,6 +208,20 @@ class SandboxConfig(BaseModel):
     gateway: GatewayConfigModel = Field(default_factory=GatewayConfigModel)
 
 
+class HealthConfig(BaseModel):
+    """Health endpoint configuration (Phase 21).
+
+    Controls the /health/live, /health/ready, /health/deep probes.
+    When enabled = False (default), health endpoints still respond but return
+    minimal information — no dependency checks that could leak internal topology.
+    When enabled = True, /health/ready and /health/deep perform real dependency checks.
+    """
+
+    enabled: bool = True
+    # Whether /health/deep performs ledger chain integrity verification.
+    deep_checks: bool = True
+
+
 class TracingConfig(BaseModel):
     """OpenTelemetry tracing and metrics configuration (Phase 20).
 
@@ -341,6 +355,7 @@ class AetherConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+    health: HealthConfig = Field(default_factory=HealthConfig)
     tracing: TracingConfig = Field(default_factory=TracingConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
     key_rotation: KeyRotationConfig = Field(default_factory=KeyRotationConfig)

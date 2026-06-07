@@ -167,6 +167,9 @@ def configure(exporter_type: str = "none", otlp_endpoint: str = "") -> None:
         _meter_provider = meter_provider
         _enabled = True
 
+    from . import trace_log as _trace_log
+    _trace_log.install_log_filter()
+
 
 @dataclass
 class TraceFixture:
@@ -233,6 +236,9 @@ def configure_for_test() -> TraceFixture:
         _tracer_provider = provider
         _meter_provider = meter_provider
         _enabled = True
+
+    from . import trace_log as _trace_log
+    _trace_log.install_log_filter()
 
     return TraceFixture(exporter=exporter, metric_reader=metric_reader)
 
