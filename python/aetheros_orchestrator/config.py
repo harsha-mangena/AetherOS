@@ -118,6 +118,20 @@ class StorageConfig(BaseModel):
     # Directory for SQLite databases (one file per tenant, keyed by tenant_id).
     db_dir: str = "./ledgers"
 
+    # ── Run-state durability (Phase 13) ──────────────────────────────────────
+    # Whether the resumable RunService run state (status, cursor, pending approval
+    # gate, results, and the signed lease + agent identities that hold the run's
+    # authority) is persisted to SQLite so in-flight governed runs — including those
+    # paused at a human approval gate — survive a service restart. When False (the
+    # default) run state lives in memory only, identical to pre-Phase-13 behavior
+    # and backward-compatible with all prior tests. The evidence ledger durability
+    # above is independent; enabling persist_runs without backend="sqlite" persists
+    # the run scalars + lease but restores ledgers as fresh (use both together for a
+    # fully durable run).
+    persist_runs: bool = False
+    # Directory for the per-tenant run-state SQLite databases.
+    run_state_db_dir: str = "./run_states"
+
 
 class AuthConfig(BaseModel):
     """API authentication configuration (Phase 12).

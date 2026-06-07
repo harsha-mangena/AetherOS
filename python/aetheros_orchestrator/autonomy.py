@@ -33,6 +33,16 @@ class AutonomyTracker:
             self._records[agent_id] = rec
         return rec
 
+    def restore(self, agent_id: str, record_json: str) -> None:
+        """Rehydrate an agent's earned-autonomy record from its JSON snapshot.
+
+        Used by run-state durability (Phase 13): a restored run must come back at
+        the exact tier the agent had earned, because the tier drives approval-gate
+        re-evaluation. The Rust ``AutonomyRecord.from_json`` reconstructs the record
+        (successes, violations, tier) verbatim.
+        """
+        self._records[agent_id] = _native.AutonomyRecord.from_json(record_json)
+
     def tier(self, agent_id: str) -> int:
         """Current autonomy tier for an agent (0 if unseen)."""
         return self._record(agent_id).tier

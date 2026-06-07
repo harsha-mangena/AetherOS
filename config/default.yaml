@@ -138,6 +138,20 @@ storage:
   # Directory for SQLite databases. One file per tenant (safe-named). Created on
   # first use. Has no effect when backend = "none".
   db_dir: "./ledgers"
+  # ── Run-state durability (Phase 13) ──────────────────────────────────────
+  # Whether resumable governed-run state (status, plan cursor, pending human
+  # approval gate, results, and the signed lease + agent identities holding the
+  # run's authority) survives a service restart. The signed lease is persisted with
+  # its consumed-budget (spent_minor) and issuer signature intact, so a restored run
+  # cannot forget how much budget it burned or have its authority silently re-minted.
+  #
+  # false  — run state in-memory only (default, backward-compatible with all tests).
+  # true   — persist run state to SQLite after every state-machine transition and
+  #          repopulate in-flight runs on startup. Pair with backend: "sqlite" above
+  #          for a fully durable run (state + evidence ledger both survive).
+  persist_runs: false
+  # Directory for the per-tenant run-state SQLite databases.
+  run_state_db_dir: "./run_states"
 
 # ── Authentication (Phase 12) ──────────────────────────────────────────────
 # JWT Bearer-token gate for the control-plane API.

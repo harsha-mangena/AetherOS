@@ -104,6 +104,41 @@ class GovernanceContext:
         ctx.issue_lease(intent, required_scopes)
         return ctx
 
+    @classmethod
+    def restore(
+        cls,
+        config: AetherConfig,
+        control_plane: AgentIdentity,
+        agent: AgentIdentity,
+        ledger: EvidenceLedger,
+        lease: CapabilityLease,
+        autonomy: AutonomyTracker | None = None,
+        policy: PolicyEngine | None = None,
+        constitution: ConstitutionEngine | None = None,
+    ) -> "GovernanceContext":
+        """Reconstruct a governance context for a restored run (Phase 13).
+
+        Unlike ``for_run``, this issues NO new lease and appends NO new ledger
+        entry — it re-attaches the exact identities, signed lease (with its
+        preserved ``spent_minor`` budget state and issuer signature), restored
+        ledger, and earned-autonomy record that were persisted. Policy and
+        constitution engines are rebuilt from config (they hold no per-run mutable
+        state). The result is byte-for-byte the authority the run had before the
+        restart: ``lease.verify()`` still passes because the control-plane identity
+        carries the same public key that signed it.
+        """
+        ctx = cls(
+            config,
+            control_plane,
+            agent,
+            ledger,
+            policy=policy,
+            autonomy=autonomy,
+            constitution=constitution,
+        )
+        ctx.lease = lease
+        return ctx
+
     def issue_lease(self, intent: Intent, scopes: list[str]) -> CapabilityLease:
         """Issue a signed lease to the agent for exactly `scopes`, recording it."""
         lease = CapabilityLease.issue(

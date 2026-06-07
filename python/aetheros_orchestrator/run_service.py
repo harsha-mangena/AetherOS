@@ -24,6 +24,7 @@ a high-impact step it pauses (persisting the paused position) and returns
 
 from __future__ import annotations
 
+import json
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -31,13 +32,16 @@ from datetime import datetime, timezone
 from typing import Any
 
 from aetheros import EvidenceLedger
+from aetheros.identity import AgentIdentity
+from aetheros.lease import CapabilityLease
 
 from .config import AetherConfig, load_config
 from .governance import GovernanceContext
 from .intent_compiler import IntentCompiler
-from .ledger_store import make_ledger
+from .ledger_store import make_ledger, DurableLedger, SQLiteStore, NoStore
 from .mcp_adapter import MCPAdapter, default_incident_adapter
 from .models import ExecutionPlan, Intent, PlanStep, StepResult, StepStatus
+from .run_state_store import RunStateStore, make_run_state_store
 from .sandbox import SandboxController, SandboxExecutionError, build_local_sandbox
 from .tenancy import (
     DEFAULT_TENANT_ID,
@@ -132,6 +136,141 @@ class RunState:
         return StepStatus.PENDING.value
 
 
+class RunStateSerializer:
+    """Serialize/restore a ``RunState`` for durability (Phase 13).
+
+    The serializer is the single choke point that decides exactly what survives a
+    restart and how it is reconstructed. It captures three classes of state:
+
+    * plain resumable structure (status, cursor, results, intent, plan, …),
+    * the governance restoration triple (control-plane + agent identities as
+      seed-hex, and the signed lease JSON which preserves spent budget + signature),
+    * the executing agent's earned-autonomy snapshot.
+
+    The durable evidence ledger is persisted/restored separately by the Phase-10
+    ``LedgerStore`` and re-attached during restore. Live objects (sandbox, policy,
+    constitution) are rebuilt from config, never pickled.
+
+    ``SERIAL_VERSION`` lets a future format change be detected at load time.
+    """
+
+    SERIAL_VERSION = 1
+
+    @staticmethod
+    def dump(run: "RunState") -> str:
+        """Produce the canonical-JSON state document for a run."""
+        ctx = run.ctx
+        assert ctx.lease is not None, "cannot persist a run whose lease was never issued"
+        doc: dict[str, Any] = {
+            "serial_version": RunStateSerializer.SERIAL_VERSION,
+            "run_id": run.run_id,
+            "tenant_id": run.tenant_id,
+            "status": run.status,
+            "cursor": run.cursor,
+            "pending_step_id": run.pending_step_id,
+            "total_cost_minor": run.total_cost_minor,
+            "denied_reason": run.denied_reason,
+            "created_at": run.created_at,
+            "intent": run.intent.model_dump(),
+            # Persist the plan verbatim — never recompile on restore, so a
+            # non-deterministic/evolving IntentCompiler cannot make a restored run
+            # diverge from the one that was authorized and partially executed.
+            "plan": run.plan.model_dump(),
+            "results": [r.model_dump() for r in run.results],
+            "destinations": dict(run.destinations),
+            # ── governance restoration triple ──────────────────────────────────
+            "control_plane": {
+                "agent_id": ctx.control_plane.agent_id,
+                "display_name": ctx.control_plane.display_name,
+                "created_at": ctx.control_plane.created_at,
+                "seed_hex": ctx.control_plane.secret_seed_hex(),
+            },
+            "agent": {
+                "agent_id": ctx.agent.agent_id,
+                "display_name": ctx.agent.display_name,
+                "created_at": ctx.agent.created_at,
+                "seed_hex": ctx.agent.secret_seed_hex(),
+            },
+            # Lease JSON preserves spent_minor (consumed budget) + issuer signature.
+            "lease_json": ctx.lease.to_json(),
+            # Earned-autonomy snapshot for the executing agent (drives approval gates).
+            "autonomy_json": json.dumps(ctx.autonomy.snapshot(ctx.agent.agent_id)),
+        }
+        return json.dumps(doc, separators=(",", ":"), sort_keys=True)
+
+    @staticmethod
+    def load(
+        state_json: str,
+        config: AetherConfig,
+        ledger: EvidenceLedger,
+        adapter: MCPAdapter,
+    ) -> "RunState":
+        """Reconstruct a fully live ``RunState`` from its persisted document.
+
+        ``ledger`` must be the run's restored durable ledger (loaded by the caller
+        via the Phase-10 store). ``adapter`` + ``config`` rebuild the sandbox and the
+        policy/constitution engines deterministically. The lease and identities are
+        restored exactly, so the run resumes with the authority and consumed budget
+        it had before the restart.
+        """
+        doc = json.loads(state_json)
+        version = doc.get("serial_version")
+        if version != RunStateSerializer.SERIAL_VERSION:
+            raise ValueError(
+                f"unsupported run-state serial_version {version!r} "
+                f"(expected {RunStateSerializer.SERIAL_VERSION})"
+            )
+
+        intent = Intent.model_validate(doc["intent"])
+        plan = ExecutionPlan.model_validate(doc["plan"])
+        results = [StepResult.model_validate(r) for r in doc["results"]]
+
+        cp = doc["control_plane"]
+        control_plane = AgentIdentity.from_seed_hex(
+            cp["agent_id"], cp["display_name"], cp["created_at"], cp["seed_hex"]
+        )
+        ag = doc["agent"]
+        agent = AgentIdentity.from_seed_hex(
+            ag["agent_id"], ag["display_name"], ag["created_at"], ag["seed_hex"]
+        )
+        lease = CapabilityLease.from_json(doc["lease_json"])
+
+        from .autonomy import AutonomyTracker
+
+        autonomy = AutonomyTracker.from_config(config)
+        autonomy.restore(agent.agent_id, doc["autonomy_json"])
+
+        ctx = GovernanceContext.restore(
+            config,
+            control_plane=control_plane,
+            agent=agent,
+            ledger=ledger,
+            lease=lease,
+            autonomy=autonomy,
+        )
+
+        sandbox, _destinations = build_local_sandbox(config, adapter)
+        destinations = dict(doc.get("destinations") or _destinations)
+
+        run = RunState(
+            run_id=doc["run_id"],
+            intent=intent,
+            plan=plan,
+            ctx=ctx,
+            sandbox=sandbox,
+            destinations=destinations,
+            tenant_id=doc["tenant_id"],
+            status=doc["status"],
+            cursor=doc["cursor"],
+            results=results,
+            total_cost_minor=doc["total_cost_minor"],
+            denied_reason=doc["denied_reason"],
+            created_at=doc["created_at"],
+            pending_step_id=doc["pending_step_id"],
+        )
+        return run
+
+
 class RunService:
     """Creates and drives resumable governed runs for the UI / API layer."""
 
@@ -165,6 +304,18 @@ class RunService:
         self._marketplace = SkillMarketplace(
             constitution=ConstitutionEngine.from_config(self._config)
         )
+        # Phase 13: run-state durability. When storage.persist_runs is true, every
+        # state-machine transition is snapshotted to SQLite and in-flight runs are
+        # repopulated from disk at startup — so a run paused at a human approval gate
+        # survives a service restart. Default NoRunStateStore → in-memory only.
+        scfg = self._config.storage
+        self._persist_runs = scfg.persist_runs
+        self._run_store: RunStateStore = make_run_state_store(
+            backend="sqlite" if scfg.persist_runs else "none",
+            db_dir=scfg.run_state_db_dir,
+        )
+        if self._persist_runs:
+            self._restore_runs_from_storage()
 
     def _build_witness_registry(self):
         """Construct the config-driven witness panel (lazy import; zero-hardcoding)."""
@@ -205,7 +356,56 @@ class RunService:
             self._tenants.get(tid)  # raises UnknownTenant if it doesn't exist
         return tid
 
-    # ── lifecycle ───────────────────────────────────────────────────────────
+    # ── run-state durability (Phase 13) ───────────────────────────────────────
+
+    def _persist_run(self, run: RunState) -> None:
+        """Snapshot a run's resumable state to the durable store (no-op if disabled).
+
+        Called after every state-machine transition. The evidence ledger persists
+        itself independently after each append (Phase 10 DurableLedger); this writes
+        the run scalars + governance restoration triple so the two together fully
+        reconstruct the run.
+        """
+        if not self._persist_runs:
+            return
+        self._run_store.persist(run.tenant_id, run.run_id, RunStateSerializer.dump(run))
+
+    def _restore_runs_from_storage(self) -> None:
+        """Repopulate ``self._runs`` from durable storage at service startup.
+
+        For each persisted run: restore its evidence ledger from the Phase-10 ledger
+        store (Rust re-verifies the hash chain), then rebuild the live RunState via
+        the serializer. A run whose ledger snapshot is missing or fails verification
+        is skipped (logged via the ledger raising) so one corrupt run can't block the
+        whole service from coming back up.
+        """
+        scfg = self._config.storage
+        for tenant_id, run_id, state_json in self._run_store.load_all():
+            try:
+                ledger = self._restore_ledger(tenant_id, run_id)
+                run = RunStateSerializer.load(
+                    state_json, self._config, ledger, self._adapter
+                )
+            except Exception:
+                # Skip unrecoverable runs; the durable evidence remains on disk for
+                # forensic inspection. Do not let one bad row abort startup.
+                continue
+            self._runs[run.run_id] = run
+
+    def _restore_ledger(self, tenant_id: str, run_id: str):
+        """Load a run's durable evidence ledger for restoration.
+
+        When the ledger backend is SQLite, restore via DurableLedger.from_storage
+        (Rust re-verifies the chain). Otherwise the ledger was never persisted, so
+        the restored run gets a fresh in-memory ledger wrapper — the run scalars and
+        lease still restore, but prior evidence is not available (this is the
+        documented persist_runs-without-sqlite mode).
+        """
+        scfg = self._config.storage
+        if scfg.backend == "sqlite":
+            store = SQLiteStore(db_dir=scfg.db_dir)
+            return DurableLedger.from_storage(tenant_id, run_id, store)
+        return DurableLedger(tenant_id, run_id, NoStore())
 
     def create_run(
         self,
@@ -247,6 +447,7 @@ class RunService:
         )
         with self._lock:
             self._runs[run.run_id] = run
+        self._persist_run(run)
         return run
 
     def get(self, run_id: str, tenant_id: str | None = None) -> RunState:
@@ -289,6 +490,7 @@ class RunService:
             if run.ctx.requires_approval(step):
                 run.status = RunStatus.AWAITING_APPROVAL
                 run.pending_step_id = step.step_id
+                self._persist_run(run)  # the paused gate must survive a restart
                 return run
 
             if not self._execute_step(run, step):
@@ -398,6 +600,7 @@ class RunService:
         )
         run.status = RunStatus.HALTED
         run.denied_reason = "cancelled by operator"
+        self._persist_run(run)
         return run
 
     def delete_run(self, run_id: str, tenant_id: str | None = None) -> None:
@@ -414,6 +617,9 @@ class RunService:
             )
         with self._lock:
             self._runs.pop(run_id, None)
+        # Purge durable run state so a deleted run is not resurrected on restart.
+        if self._persist_runs:
+            self._run_store.delete(run.tenant_id, run_id)
 
     # ── collaboration (Phase 11) ─────────────────────────────────────────────
 
@@ -605,6 +811,7 @@ class RunService:
         )
         if completed:
             run.ctx.autonomy.record_success(run.ctx.agent.agent_id)
+        self._persist_run(run)
         return run
 
     # ── analytics ──────────────────────────────────────────────────────────────
